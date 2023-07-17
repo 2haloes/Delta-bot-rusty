@@ -1,0 +1,9 @@
+{
+    "function_data": [
+        {
+        "function_command": "!delta-dalle",
+        "function_type": "openai_dalle",
+        "function_api_key": ""
+        }
+    ]
+}

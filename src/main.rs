@@ -1,53 +1,67 @@
-use std::{env, fs, time::SystemTime};
+use std::{env, path::PathBuf};
 
-use rusqlite::Connection;
 use serenity::{
     async_trait,
     model::{channel::Message, gateway::Ready},
-    prelude::*, client::Cache, http::{CacheHttp, Http, Typing},
+    prelude::*, client::Cache, http::{CacheHttp, Http, Typing}, builder::CreateMessage,
 };
 
 use async_openai::{
-    types::{ChatCompletionRequestMessageArgs, Role, ChatCompletionRequestMessage, CreateChatCompletionRequestArgs}, Client,
+    types::{ChatCompletionRequestMessageArgs, Role, ChatCompletionRequestMessage, CreateChatCompletionRequestArgs, CreateImageRequestArgs, ImageSize, ResponseFormat}, Client,
 };
 use tokio::task;
 
-const HELP_MESSAGE: &str = "
-Hello there, Human!
+#[derive(serde::Deserialize)]
+struct FunctionData {
+    function_command: String,
+    function_type: String,
+    // Planned to be used when connecting to serverless image generation services
+    function_api_key: String
+}
 
-You have summoned me. Let's see about getting you what you need.
-
-? Need technical help?
-=> Post in the <#CHANNEL_ID> channel and other humans will assist you.
-
-? Looking for the Code of Conduct?
-=> Here it is: <https://opensource.facebook.com/code-of-conduct>
-
-? Something wrong?
-=> You can flag an admin with @admin
-
-I hope that resolves your issue!
--- Helpbot
-
-";
-
-const HELP_COMMAND: &str = "!help";
-const IMAGEGEN_COMMAND: &str = "!delta-imagegen";
-const DALLE_COMMAND: &str = "!delta-dalle";
-const PASTELMIX_COMMAND: &str = "!delta-pastelgen";
+#[derive(serde::Deserialize)]
+struct JsonObject{
+    function_data: Vec<FunctionData>
+}
 
 struct Handler;
 
 #[async_trait]
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
+        let author_id: String = env::var("USER_ID").expect("Can't get USER_ID system variable");
 
         if env::var("DEBUG").expect("Can't get DEBUG system variable") != 1.to_string() ||
-        env::var("USER_ID").expect("Can't get USER_ID system variable") == msg.author.id.to_string() {
+        author_id == msg.author.id.to_string() {
             if msg.author.id != ctx.cache.current_user().id {
-                if msg.content.starts_with("!") {
-                    let conn = Connection::open("assets/function_db").expect("Unable to open connection to SQLite DB");
-                    let full_command = msg.content_safe(ctx.clone().cache).splitn(2, " ");
+                if msg.content.starts_with("!delta") {
+                    let msg_safe = msg.content_safe(ctx.clone().cache);
+                    let mut full_command = msg_safe.splitn(2, " ");
+                    let command_string = full_command.next().unwrap();
+                    let command_data = full_command.next().unwrap();
+                    let function_json_string = tokio::fs::read_to_string("assets/functions.json").await.expect("Unable to get function data");
+                    let function_object: JsonObject = serde_json::from_str(&function_json_string).unwrap();
+                    let current_function: FunctionData = function_object.function_data.into_iter().filter(|function| function.function_command == command_string).next().unwrap();
+                    let command_function_str = current_function.function_type.as_str();
+
+                    match command_function_str {
+                        "openai_dalle"=>{
+                            let image_path: PathBuf = generate_dalle(command_data.to_owned()).await;
+                            let image_file = [(&tokio::fs::File::open(image_path).await.expect("Unable to open DALL-E image"), "image.png")];
+
+                            msg.channel_id.send_message(ctx.http, |message: &mut CreateMessage<'_>| {
+                                message.reference_message(&msg);
+                                message.allowed_mentions(|am| {
+                                    am.replied_user(true);
+                                    am
+                                });
+                                message.files(image_file);
+                                message.content("Hello, thank you for the request! Here is the image you've requested!");
+                                message
+                            }).await.expect("DALL-E message failed to send");
+                        }
+                        _=>{msg.reply(ctx.http, "Your command has not been recognised, sorry I couldn't help!".to_owned()).await.expect("Unable to send default command reply");}
+                    }
                 } else if msg.mentions_user_id(ctx.cache.current_user().id) {
                     task::spawn(async move {
                         let typing = Typing::start(ctx.clone().http, msg.channel_id.into())
@@ -193,3 +207,20 @@ async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Vec<St
     return return_vec;
 }
 
+async fn generate_dalle (prompt_text: String) -> PathBuf {
+    let client = Client::new();
+    let request = CreateImageRequestArgs::default()
+        .prompt(prompt_text)
+        .n(1)
+        .response_format(ResponseFormat::Url)
+        .size(ImageSize::S1024x1024)
+        .user("Delta-Bot")
+        .build()
+        .expect("Exception when building DALL-E image request");
+
+    let response = client.images().create(request).await.expect("Exception when getting DALL-E image response");
+
+    let mut image_path = response.save("./images").await.expect("Unable to save returned image");
+
+    return image_path.remove(0);
+}
