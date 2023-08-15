@@ -4,6 +4,16 @@
         "function_command": "!delta-dalle",
         "function_type": "openai_dalle",
         "function_api_key": ""
+        },
+        {
+            "function_command": "!delta-imagegen",
+            "function_type": "runpod_image",
+            "function_api_key": "stable-diffusion-v2"
+        },
+        {
+            "function_command": "!delta-animegen",
+            "function_type": "runpod_image",
+            "function_api_key": "sd-anything-v3"
         }
     ]
 }

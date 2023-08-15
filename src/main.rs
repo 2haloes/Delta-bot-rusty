@@ -1,4 +1,4 @@
-use std::{env, path::PathBuf};
+use std::{env, path::{PathBuf, Path}, thread::sleep, time::Duration, fs::{File, self}, io::copy};
 
 use serenity::{
     async_trait,
@@ -10,12 +10,13 @@ use async_openai::{
     types::{ChatCompletionRequestMessageArgs, Role, ChatCompletionRequestMessage, CreateChatCompletionRequestArgs, CreateImageRequestArgs, ImageSize, ResponseFormat}, Client,
 };
 use tokio::task;
+use reqwest::header::HeaderValue;
+use uuid::Uuid;
 
 #[derive(serde::Deserialize)]
 struct FunctionData {
     function_command: String,
     function_type: String,
-    // Planned to be used when connecting to serverless image generation services
     function_api_key: String
 }
 
@@ -24,46 +25,102 @@ struct JsonObject{
     function_data: Vec<FunctionData>
 }
 
+#[derive(serde::Deserialize)]
+struct RunResponseObject {
+    id: String,
+    status: String
+}
+
+#[derive(serde::Deserialize)]
+struct ImageGenOutput {
+    image: String,
+    seed: u32
+}
+
+#[derive(serde::Deserialize)]
+struct OutputResponseObject {
+    delayTime: Option<u64>,
+    executionTime: Option<u64>,
+    id: Option<String>,
+    output: Option<Vec<ImageGenOutput>>,
+    status: Option<String>
+}
+
+#[derive(serde::Serialize)]
+struct ImageGenRunInput {
+    prompt: String,
+    negative_prompt: String,
+    width: u32,
+    height: u32,
+    init_image: String,
+    mask: String,
+    guidance_scale: f32,
+    num_inference_steps: u32,
+    num_outputs: u32,
+    prompt_strength: f32,
+    scheduler: String,
+    seed: u32
+}
+
+#[derive(serde::Serialize)]
+struct ImageGenRequest {
+    input: ImageGenRunInput,
+    webhook: String
+}
+
 struct Handler;
 
 #[async_trait]
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
-        let author_id: String = env::var("USER_ID").expect("Can't get USER_ID system variable");
+        task::spawn(async move {
+            let author_id: String = env::var("USER_ID").expect("Can't get USER_ID system variable");
 
-        if env::var("DEBUG").expect("Can't get DEBUG system variable") != 1.to_string() ||
-        author_id == msg.author.id.to_string() {
-            if msg.author.id != ctx.cache.current_user().id {
-                if msg.content.starts_with("!delta") {
-                    let msg_safe = msg.content_safe(ctx.clone().cache);
-                    let mut full_command = msg_safe.splitn(2, " ");
-                    let command_string = full_command.next().unwrap();
-                    let command_data = full_command.next().unwrap();
-                    let function_json_string = tokio::fs::read_to_string("assets/functions.json").await.expect("Unable to get function data");
-                    let function_object: JsonObject = serde_json::from_str(&function_json_string).unwrap();
-                    let current_function: FunctionData = function_object.function_data.into_iter().filter(|function| function.function_command == command_string).next().unwrap();
-                    let command_function_str = current_function.function_type.as_str();
+            if env::var("DEBUG").expect("Can't get DEBUG system variable") != 1.to_string() ||
+            author_id == msg.author.id.to_string() {
+                if msg.author.id != ctx.cache.current_user().id {
+                    if msg.content.starts_with("!delta") {
+                        let typing = Typing::start(ctx.clone().http, msg.channel_id.into())
+                            .expect("Unable to start typing");
+                        let msg_safe = msg.content_safe(ctx.clone().cache);
+                        let mut full_command = msg_safe.splitn(2, " ");
+                        let command_string = full_command.next().unwrap();
+                        let command_data = full_command.next().unwrap();
+                        let function_json_string = tokio::fs::read_to_string("assets/functions.json").await.expect("Unable to get function data");
+                        let function_object: JsonObject = serde_json::from_str(&function_json_string).unwrap();
+                        let current_function: FunctionData = function_object.function_data.into_iter().filter(|function| function.function_command == command_string).next().unwrap();
+                        let command_function_str = current_function.function_type.as_str();
+                        let command_api_str = current_function.function_api_key;
+                        let image_path: Option<PathBuf>;
 
-                    match command_function_str {
-                        "openai_dalle"=>{
-                            let image_path: PathBuf = generate_dalle(command_data.to_owned()).await;
-                            let image_file = [(&tokio::fs::File::open(image_path).await.expect("Unable to open DALL-E image"), "image.png")];
-
-                            msg.channel_id.send_message(ctx.http, |message: &mut CreateMessage<'_>| {
-                                message.reference_message(&msg);
-                                message.allowed_mentions(|am| {
-                                    am.replied_user(true);
-                                    am
-                                });
-                                message.files(image_file);
-                                message.content("Hello, thank you for the request! Here is the image you've requested!");
-                                message
-                            }).await.expect("DALL-E message failed to send");
+                        match command_function_str {
+                            "openai_dalle"=>{
+                                image_path = Some(generate_dalle(command_data.to_owned(), msg.clone()).await);
+                            }
+                            "runpod_image"=>{
+                                image_path = Some(generate_runpod_image(command_data.to_owned(), command_api_str, msg.clone()).await);
+                            }
+                            _=>{
+                                msg.reply(ctx.http, "Your command has not been recognised, sorry I couldn't help!".to_owned()).await.expect("Unable to send default command reply");
+                                return;
+                            }
                         }
-                        _=>{msg.reply(ctx.http, "Your command has not been recognised, sorry I couldn't help!".to_owned()).await.expect("Unable to send default command reply");}
-                    }
-                } else if msg.mentions_user_id(ctx.cache.current_user().id) {
-                    task::spawn(async move {
+
+                        let image_file = [(&tokio::fs::File::open(image_path.clone().unwrap()).await.expect("Unable to open DALL-E image"), "image.png")];
+
+                        msg.channel_id.send_message(ctx.http, |message: &mut CreateMessage<'_>| {
+                            message.reference_message(&msg);
+                            message.allowed_mentions(|am| {
+                                am.replied_user(true);
+                                am
+                            });
+                            message.files(image_file);
+                            message.content("Hello, thank you for the request! Here is the image you've requested!");
+                            message
+                        }).await.expect("DALL-E message failed to send");
+                        typing.stop().expect("Unable to stop typing");
+                        fs::remove_file(image_path.unwrap()).expect("Unable to delete imagegen file");
+                    } else if msg.mentions_user_id(ctx.cache.current_user().id) {
                         let typing = Typing::start(ctx.clone().http, msg.channel_id.into())
                             .expect("Unable to start typing");
                         let mut reply_msg = msg.clone();
@@ -72,12 +129,11 @@ impl EventHandler for Handler {
                             reply_msg = reply_msg.reply(&ctx.http, format!("DEBUG: {response}")).await.expect("Error sending message");
                         }
                         typing.stop().expect("Unable to stop typing");
-                    });
 
+                    }
                 }
             }
-        }
-
+        });
     }
 
     async fn ready(&self, _: Context, ready: Ready) {
@@ -207,7 +263,7 @@ async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Vec<St
     return return_vec;
 }
 
-async fn generate_dalle (prompt_text: String) -> PathBuf {
+async fn generate_dalle (prompt_text: String, msg: Message) -> PathBuf {
     let client = Client::new();
     let request = CreateImageRequestArgs::default()
         .prompt(prompt_text)
@@ -223,4 +279,69 @@ async fn generate_dalle (prompt_text: String) -> PathBuf {
     let mut image_path = response.save("./images").await.expect("Unable to save returned image");
 
     return image_path.remove(0);
+}
+
+async fn generate_runpod_image (prompt_text: String, model_ref: String, msg: Message) -> PathBuf {
+    let runpod_auth_key = env::var("RUNPOD_API_KEY").expect("");
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert("accept", HeaderValue::from_static("application/json"));
+    headers.insert("authorization", HeaderValue::from_str(&runpod_auth_key).unwrap());
+    headers.insert("content-type", HeaderValue::from_static("application/json"));
+    let client = reqwest::Client::new();
+    let run_response: RunResponseObject = client.post(format!("https://api.runpod.ai/v2/{}/run", model_ref))
+       .headers(headers.clone())
+       .body(format!("{{
+           \"input\": {{
+              \"prompt\": \"{}\",
+               \"height\": 768,
+               \"width\": 768,
+               \"scheduler\": \"DDIM\",
+               \"num_inference_steps\": 40
+           }}
+       }}", prompt_text))
+       .send()
+       .await
+       .expect("Failed to start runpod job")
+       .json()
+       .await
+       .expect("Unable to convert JSON to object");
+
+    let mut status_response: OutputResponseObject;
+
+    loop {
+        status_response = client.post(format!("https://api.runpod.ai/v2/{}/status/{}", model_ref, run_response.id))
+        .headers(headers.clone())
+        .send()
+        .await
+        .expect("Unable to send request to RunPod endpoint")
+        .json()
+        .await
+        .expect("Unable to convert JSON to object");
+
+        if !(status_response.status.clone().unwrap() == "IN_QUEUE" || status_response.status.clone().unwrap() == "IN_PROGRESS") {
+            break;
+        }
+
+        sleep(Duration::from_secs(2));
+    }
+    
+    let image_path: PathBuf = Path::new(&format!("./images/{}.png", Uuid::from_u128(rand::random::<u128>()))).to_path_buf();
+    let mut image_data_response: &[u8] = &reqwest::get(status_response.output.unwrap()[0]
+        .image.to_owned())
+        .await
+        .expect("Unable to download the generated RunPod image")
+        .bytes()
+        .await
+        .expect("Unable to convert image link to bytes");
+    let mut image_file = File::create(image_path.clone()).expect("Unable to create image file");
+    copy(&mut image_data_response, &mut image_file).expect("Error writing Runpod image file");
+    return image_path;
+}
+
+async fn return_error (msg: Message, error_msg : String) {
+    let current_http = Http::new(&env::var("DISCORD_TOKEN")
+    .expect("Expected a token in the environment"));    
+    msg.reply(current_http, format!("Apologies, your request cannot be completed, the error is as follows:\n```{}```", error_msg))
+    .await
+    .expect("Error showing an error");
 }
