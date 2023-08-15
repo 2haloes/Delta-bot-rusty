@@ -75,9 +75,16 @@ impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
         task::spawn(async move {
             let author_id: String = env::var("USER_ID").expect("Can't get USER_ID system variable");
+            let debug_enabled: bool = env::var("DEBUG").expect("Can't get DEBUG system variable").parse().unwrap();
 
-            if env::var("DEBUG").expect("Can't get DEBUG system variable") != 1.to_string() ||
+            if debug_enabled != true ||
             author_id == msg.author.id.to_string() {
+                let message_prefix: String;
+                if debug_enabled {
+                    message_prefix = "DEBUG: ".to_string();
+                } else {
+                    message_prefix = "".to_string();
+                }
                 if msg.author.id != ctx.cache.current_user().id {
                     if msg.content.starts_with("!delta") {
                         let typing = Typing::start(ctx.clone().http, msg.channel_id.into())
@@ -101,7 +108,7 @@ impl EventHandler for Handler {
                                 image_path = Some(generate_runpod_image(command_data.to_owned(), command_api_str, msg.clone()).await);
                             }
                             _=>{
-                                msg.reply(ctx.http, "Your command has not been recognised, sorry I couldn't help!".to_owned()).await.expect("Unable to send default command reply");
+                                msg.reply(ctx.http, format!("{}Your command has not been recognised, sorry I couldn't help!", message_prefix)).await.expect("Unable to send default command reply");
                                 return;
                             }
                         }
@@ -115,7 +122,7 @@ impl EventHandler for Handler {
                                 am
                             });
                             message.files(image_file);
-                            message.content("Hello, thank you for the request! Here is the image you've requested!");
+                            message.content(format!("{}Hello, thank you for the request! Here is the image you've requested!", message_prefix));
                             message
                         }).await.expect("DALL-E message failed to send");
                         typing.stop().expect("Unable to stop typing");
@@ -126,7 +133,7 @@ impl EventHandler for Handler {
                         let mut reply_msg = msg.clone();
                         let response_vec = text_reply(msg, &ctx, ctx.cache.current_user().id.into()).await;
                         for response in response_vec {
-                            reply_msg = reply_msg.reply(&ctx.http, format!("DEBUG: {response}")).await.expect("Error sending message");
+                            reply_msg = reply_msg.reply(&ctx.http, format!("{}{}", message_prefix, response)).await.expect("Error sending message");
                         }
                         typing.stop().expect("Unable to stop typing");
 
