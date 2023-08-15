@@ -75,12 +75,12 @@ impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
         task::spawn(async move {
             let author_id: String = env::var("USER_ID").expect("Can't get USER_ID system variable");
-            let debug_enabled: bool = env::var("DEBUG").expect("Can't get DEBUG system variable").parse().unwrap();
+            let debug_enabled: String = env::var("DEBUG").expect("Can't get DEBUG system variable");
 
-            if debug_enabled != true ||
+            if debug_enabled != "1".to_owned() ||
             author_id == msg.author.id.to_string() {
                 let message_prefix: String;
-                if debug_enabled {
+                if debug_enabled == "1".to_owned() {
                     message_prefix = "DEBUG: ".to_string();
                 } else {
                     message_prefix = "".to_string();
