@@ -7,7 +7,7 @@ use serenity::{
 };
 
 use async_openai::{
-    types::{ChatCompletionRequestMessageArgs, Role, ChatCompletionRequestMessage, CreateChatCompletionRequestArgs, CreateImageRequestArgs, ImageSize, ResponseFormat}, Client,
+    types::{ChatCompletionRequestMessageArgs, Role, ChatCompletionRequestMessage, CreateChatCompletionRequestArgs, CreateImageRequestArgs, ImageSize, ResponseFormat, ImageModel}, Client,
 };
 use tokio::task;
 use reqwest::header::HeaderValue;
@@ -232,7 +232,7 @@ async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Vec<St
     context_messages.reverse();
 
     let chatgpt_request = CreateChatCompletionRequestArgs::default()
-        .model("gpt-3.5-turbo")
+        .model("gpt-4-vision-preview")
         .temperature(1.3)
         .messages(&**context_messages)
         .build()
@@ -278,6 +278,7 @@ async fn generate_dalle (prompt_text: String, msg: Message) -> PathBuf {
         .response_format(ResponseFormat::Url)
         .size(ImageSize::S1024x1024)
         .user("Delta-Bot")
+        .model(ImageModel::DallE3)
         .build()
         .expect("Exception when building DALL-E image request");
 
