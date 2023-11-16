@@ -7,7 +7,7 @@ use serenity::{
 };
 
 use async_openai::{
-    types::{ChatCompletionRequestMessageArgs, Role, ChatCompletionRequestMessage, CreateChatCompletionRequestArgs, CreateImageRequestArgs, ImageSize, ResponseFormat, ImageModel}, Client,
+    types::{Role, ChatCompletionRequestMessage, CreateChatCompletionRequestArgs, CreateImageRequestArgs, ImageSize, ResponseFormat, ImageModel, ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestFunctionMessageArgs, ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs, ChatCompletionRequestUserMessageArgs}, Client,
 };
 use tokio::task;
 use reqwest::header::HeaderValue;
@@ -179,20 +179,12 @@ async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Vec<St
 
     if current_message.message_reference.is_none() {
         context_messages.push(
-            ChatCompletionRequestMessageArgs::default()
-            .role(current_role)
-            .content(current_message.content_safe(current_cache.as_ref()))
-            .build()
-            .expect("Failed to setup ChatGPT context")
+            generate_chat_messages(current_role, current_message.content_safe(current_cache.as_ref()))
         );
     } else {
         loop{
             context_messages.push(
-                ChatCompletionRequestMessageArgs::default()
-                .role(current_role)
-                .content(current_message.content_safe(current_cache.as_ref()))
-                .build()
-                .expect("Failed to setup ChatGPT context")
+                generate_chat_messages(current_role, current_message.content_safe(current_cache.as_ref()))
             );
 
             current_message = current_channel
@@ -214,19 +206,11 @@ async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Vec<St
     }
 
     context_messages.push(
-        ChatCompletionRequestMessageArgs::default()
-        .role(Role::User)
-        .content("Keep your replies short, do not start any reply with 'Delta:', 'Delta Bot:' or anything similar. If you wish to mention someone, you can use <@[USER ID]>, user messages start with [USER NAME]|[USER ID] and the ID for the mention can be pulled from there")
-        .build()
-        .expect("Failed to setup ChatGPT context")
+        generate_chat_messages(Role::User, "Keep your replies short, do not start any reply with 'Delta:', 'Delta Bot:' or anything similar. If you wish to mention someone, you can use <@[USER ID]>, user messages start with [USER NAME]|[USER ID] and the ID for the mention can be pulled from there".to_owned())
     );
 
     context_messages.push(
-        ChatCompletionRequestMessageArgs::default()
-        .role(Role::System)
-        .content(format!("{chatgpt_system_details} You are a cheerful android that responds to the name Delta, you care very much for your creator and do a lot of errands around your local town for them. She is also fond of using emotes in her replies. Your replies are short and rather to the point. If someone asks you a question then you do your best to reply!"))
-        .build()
-        .expect("Failed to setup ChatGPT context")
+        generate_chat_messages(Role::System, format!("{chatgpt_system_details} You are a cheerful android that responds to the name Delta, you care very much for your creator and do a lot of errands around your local town for them. She is also fond of using emotes in her replies. Your replies are short and rather to the point. If someone asks you a question then you do your best to reply!").to_owned())
     );
 
     context_messages.reverse();
@@ -240,11 +224,12 @@ async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Vec<St
 
     let response_choices = client.chat().create(chatgpt_request).await.expect("Unable to generate reply");
     let response = &response_choices.choices[0].message.content;
+    let response_text = response.as_ref().expect("Unable to convert the GPT response to text");
     let mut return_vec: Vec<String> = Vec::new();
 
-    if response.len() > 2000 {
-        let chars: Vec<char> = response.chars().collect();
-        let total_chunks = (response.len()/1980) + 1;
+    if response_text.len() > 2000 {
+        let chars: Vec<char> = response_text.chars().collect();
+        let total_chunks = (response_text.len()/1980) + 1;
         let chunk_size = 1980;
         let mut split = chars.chunks(chunk_size)
             .map(|chunk| chunk.iter().collect::<String>())
@@ -265,7 +250,7 @@ async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Vec<St
         }
         return_vec = split;
     } else {
-        return_vec.push(response.to_owned())
+        return_vec.push(response_text.to_owned())
     }
     return return_vec;
 }
@@ -352,4 +337,33 @@ async fn return_error (msg: Message, error_msg : String) {
     msg.reply(current_http, format!("Apologies, your request cannot be completed, the error is as follows:\n```{}```", error_msg))
     .await
     .expect("Error showing an error");
+}
+
+fn generate_chat_messages (current_role: Role, content: String) -> ChatCompletionRequestMessage {
+    if current_role == Role::Assistant {
+        return async_openai::types::ChatCompletionRequestMessage::Assistant(ChatCompletionRequestAssistantMessageArgs::default()
+        .content(content)
+        .build()
+        .expect("Unable to generate message to send to ChatGPT"))
+    } else if current_role == Role::Function {
+        return async_openai::types::ChatCompletionRequestMessage::Function(ChatCompletionRequestFunctionMessageArgs::default()
+        .content(content)
+        .build()
+        .expect("Unable to generate message to send to ChatGPT"))
+    } else if current_role == Role::System {
+        return async_openai::types::ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessageArgs::default()
+        .content(content)
+        .build()
+        .expect("Unable to generate message to send to ChatGPT"))
+    } else if current_role == Role::Tool {
+        return async_openai::types::ChatCompletionRequestMessage::Tool(ChatCompletionRequestToolMessageArgs::default()
+        .content(content)
+        .build()
+        .expect("Unable to generate message to send to ChatGPT"))
+    } else {
+        return async_openai::types::ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessageArgs::default()
+        .content(content)
+        .build()
+        .expect("Unable to generate message to send to ChatGPT"))
+    }
 }
