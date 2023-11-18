@@ -176,15 +176,16 @@ async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Vec<St
     // Default to user role as the bot needs to be called to reply
     let mut current_role = Role::User;
     let chatgpt_system_details = env::var("SYSTEM_DETAILS").expect("");
+    let max_tokens: u16 = 4096;
 
     if current_message.message_reference.is_none() {
         context_messages.push(
-            generate_chat_messages(current_role, current_message.content_safe(current_cache.as_ref()))
+            generate_chat_messages(current_role, current_message.author.id.0.to_string() + "|" + &current_message.author.name + ": " + &current_message.content_safe(current_cache.as_ref()))
         );
     } else {
         loop{
             context_messages.push(
-                generate_chat_messages(current_role, current_message.content_safe(current_cache.as_ref()))
+                generate_chat_messages(current_role, current_message.author.id.0.to_string() + "|" + &current_message.author.name + ": " + &current_message.content_safe(current_cache.as_ref()))
             );
 
             current_message = current_channel
@@ -205,20 +206,21 @@ async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Vec<St
         }
     }
 
-    context_messages.push(
-        generate_chat_messages(Role::User, "Keep your replies short, do not start any reply with 'Delta:', 'Delta Bot:' or anything similar. If you wish to mention someone, you can use <@[USER ID]>, user messages start with [USER NAME]|[USER ID] and the ID for the mention can be pulled from there".to_owned())
-    );
+    //context_messages.push(
+    //    generate_chat_messages(Role::User, "Do not start any reply with 'Delta:', 'Delta Bot:' or anything similar. If you wish to mention someone, you can use <@[USER ID]>, user messages start with [USER ID]|[USER NAME]: and the ID for the mention can be pulled from there".to_owned())
+    //);
 
     context_messages.push(
-        generate_chat_messages(Role::System, format!("{chatgpt_system_details} You are a cheerful android that responds to the name Delta, you care very much for your creator and do a lot of errands around your local town for them. She is also fond of using emotes in her replies. Your replies are short and rather to the point. If someone asks you a question then you do your best to reply!").to_owned())
+        generate_chat_messages(Role::System, format!("{chatgpt_system_details} You are a cheerful android that responds to the name Delta, you care very much for your creator and do a lot of errands around your local town for them. She is also fond of using emotes in her replies. If someone asks you a question then you do your best to reply! Do not start any reply with 'Delta:', 'Delta Bot:' or anything similar. If you wish to mention someone, you can use <@[USER ID]>, user messages start with [USER ID]|[USER NAME]: and the ID for the mention can be pulled from there. Please don't put an @ in front of usernames when you reply, that is only needed when using the user ID. Make all of your responses longform").to_owned())
     );
 
     context_messages.reverse();
 
     let chatgpt_request = CreateChatCompletionRequestArgs::default()
         .model("gpt-4-vision-preview")
-        .temperature(1.3)
+        .temperature(1.0)
         .messages(&**context_messages)
+        .max_tokens(max_tokens)
         .build()
             .expect("Unable to construct message reply");
 
