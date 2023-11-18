@@ -217,7 +217,7 @@ async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Vec<St
     context_messages.reverse();
 
     let chatgpt_request = CreateChatCompletionRequestArgs::default()
-        .model("gpt-4-vision-preview")
+        .model("gpt-4-1106-preview")
         .temperature(1.0)
         .messages(&**context_messages)
         .max_tokens(max_tokens)
