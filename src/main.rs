@@ -1,4 +1,4 @@
-use std::{env, path::{PathBuf, Path}, thread::sleep, time::Duration, fs::{File, self}, io::copy};
+use std::{borrow::Borrow, env, fs::{File, self}, io::copy, path::{PathBuf, Path}, result, thread::sleep, time::Duration};
 
 use serenity::{
     async_trait,
@@ -10,7 +10,7 @@ use async_openai::{
     types::{Role, ChatCompletionRequestMessage, CreateChatCompletionRequestArgs, CreateImageRequestArgs, ImageSize, ResponseFormat, ImageModel, ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestFunctionMessageArgs, ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs, ChatCompletionRequestUserMessageArgs}, Client,
 };
 use tokio::task;
-use reqwest::header::HeaderValue;
+use reqwest::{header::HeaderValue, Response};
 use uuid::Uuid;
 
 #[derive(serde::Deserialize)]
@@ -74,8 +74,8 @@ struct Handler;
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
         task::spawn(async move {
-            let author_id: String = env::var("USER_ID").expect("Can't get USER_ID system variable");
-            let debug_enabled: String = env::var("DEBUG").expect("Can't get DEBUG system variable");
+            let author_id: String = env::var("USER_ID").unwrap_or("-1".to_owned());
+            let debug_enabled: String = env::var("DEBUG").unwrap_or("0".to_owned());
 
             if debug_enabled != "1".to_owned() ||
             author_id == msg.author.id.to_string() {
@@ -87,15 +87,39 @@ impl EventHandler for Handler {
                 }
                 if msg.author.id != ctx.cache.current_user().id {
                     if msg.content.starts_with("!delta") {
-                        let typing = Typing::start(ctx.clone().http, msg.channel_id.into())
-                            .expect("Unable to start typing");
-                        let msg_safe = msg.content_safe(ctx.clone().cache);
+                        let typing = match Typing::start(ctx.clone().http, msg.channel_id.into())
+                            {
+                                Ok(t) => t,
+                                Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                            };
+                        let msg_safe = msg.borrow().content_safe(ctx.clone().cache);
                         let mut full_command = msg_safe.splitn(2, " ");
-                        let command_string = full_command.next().unwrap();
-                        let command_data = full_command.next().unwrap();
-                        let function_json_string = tokio::fs::read_to_string("assets/functions.json").await.expect("Unable to get function data");
-                        let function_object: JsonObject = serde_json::from_str(&function_json_string).unwrap();
-                        let current_function: FunctionData = function_object.function_data.into_iter().filter(|function| function.function_command == command_string).next().unwrap();
+                        let command_string = match full_command.next()
+                            {
+                                Some(t) => t,
+                                None => return_error(msg.clone(), "Unable to process command string".to_owned()).await.unwrap(),
+                            };
+                        let command_data = match full_command.next()
+                            {
+                                Some(t) => t,
+                                None => return_error(msg.clone(), "Unable to process command data string".to_owned()).await.unwrap(),
+                            };
+                        let function_json_string = match tokio::fs::read_to_string("assets/functions.json").await
+                            {
+                                Ok(t) => t,
+                                Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                            };
+                        let function_object: JsonObject = match serde_json::from_str(&function_json_string)
+                            {
+                                Ok(t) => t,
+                                Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                            };
+                        let current_function: FunctionData = match function_object.function_data.into_iter()
+                            .filter(|function| function.function_command == command_string).next()
+                            {
+                                Some(t) => t,
+                                None => return_error(msg.clone(), "Unable to process current function string".to_owned()).await.unwrap(),
+                            };
                         let command_function_str = current_function.function_type.as_str();
                         let command_api_str = current_function.function_api_key;
                         let image_path: Option<PathBuf>;
@@ -108,14 +132,21 @@ impl EventHandler for Handler {
                                 image_path = Some(generate_runpod_image(command_data.to_owned(), command_api_str, msg.clone()).await);
                             }
                             _=>{
+                                // If a reply can't be made... is there a point in trying to reply with a different error?
                                 msg.reply(ctx.http, format!("{}Your command has not been recognised, sorry I couldn't help!", message_prefix)).await.expect("Unable to send default command reply");
                                 return;
                             }
                         }
 
-                        let image_file = [(&tokio::fs::File::open(image_path.clone().unwrap()).await.expect("Unable to open DALL-E image"), "image.png")];
+                        let image_file_result = &tokio::fs::File::open(image_path.clone().unwrap()).await;
+                        let image_file = [(match image_file_result
+                            {
+                                Ok(t) => t,
+                                Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                            }, 
+                            "image.png")];
 
-                        msg.channel_id.send_message(ctx.http, |message: &mut CreateMessage<'_>| {
+                        match msg.borrow().channel_id.send_message(ctx.http, |message: &mut CreateMessage<'_>| {
                             message.reference_message(&msg);
                             message.allowed_mentions(|am| {
                                 am.replied_user(true);
@@ -124,18 +155,39 @@ impl EventHandler for Handler {
                             message.files(image_file);
                             message.content(format!("{}Hello, thank you for the request! Here is the image you've requested!", message_prefix));
                             message
-                        }).await.expect("DALL-E message failed to send");
-                        typing.stop().expect("Unable to stop typing");
-                        fs::remove_file(image_path.unwrap()).expect("Unable to delete imagegen file");
+                        }).await
+                            {
+                                Ok(t) => t,
+                                Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                            };
+                        match typing.stop()
+                            {
+                                Some(t) => t,
+                                None => return_error(msg.clone(), "Unable to process stop typing after sending image".to_owned()).await.unwrap(),
+                            };
+                        match fs::remove_file(image_path.unwrap())
+                            {
+                                Ok(t) => t,
+                                Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                            };
                     } else if msg.mentions_user_id(ctx.cache.current_user().id) {
-                        let typing = Typing::start(ctx.clone().http, msg.channel_id.into())
-                            .expect("Unable to start typing");
+                        let typing = match Typing::start(ctx.clone().http, msg.channel_id.into())
+                            {
+                                Ok(t) => t,
+                                Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                            };
                         let mut reply_msg = msg.clone();
-                        let response_vec = text_reply(msg, &ctx, ctx.cache.current_user().id.into()).await;
+                        let response_vec = text_reply(msg.clone(), &ctx, ctx.cache.current_user().id.into()).await;
                         for response in response_vec {
+                            // If the reply cannot be sent, then sending an error message might be pointless
+                            // If the issue is within generating the text, that will be handled before now
                             reply_msg = reply_msg.reply(&ctx.http, format!("{}{}", message_prefix, response)).await.expect("Error sending message");
                         }
-                        typing.stop().expect("Unable to stop typing");
+                        match typing.stop()
+                            {
+                                Some(t) => t,
+                                None => return_error(msg.clone(), "Unable to process stop typing".to_owned()).await.unwrap(),
+                            };
 
                     }
                 }
@@ -168,29 +220,48 @@ async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Vec<St
     let current_cache = Cache::new();
     let current_http = Http::new(&env::var("DISCORD_TOKEN")
     .expect("Expected a token in the environment"));
-    let current_channel = msg.channel(cache)
+    let current_channel = msg.clone().channel(cache)
         .await
         .expect("Failed to get current channel to get the ChatGPT context");
-    let mut current_message = msg;
+    let mut current_message = msg.clone();
     let context_messages: &mut Vec<ChatCompletionRequestMessage> = &mut Vec::new();
     // Default to user role as the bot needs to be called to reply
     let mut current_role = Role::User;
-    let chatgpt_system_details = env::var("SYSTEM_DETAILS").expect("");
+    let chatgpt_system_details = env::var("SYSTEM_DETAILS").unwrap_or("".to_owned());
     let max_tokens: u16 = 4096;
+    let mut message_content: String;
 
     if current_message.message_reference.is_none() {
+        message_content = current_message.author.id.0.to_string() + "|" + &current_message.author.name + ": " + &current_message.content;
         context_messages.push(
-            generate_chat_messages(current_role, current_message.author.id.0.to_string() + "|" + &current_message.author.name + ": " + &current_message.content_safe(current_cache.as_ref()))
+            generate_chat_messages(
+                current_role, 
+                message_content,
+                msg.clone()
+            )
+            .await
         );
     } else {
         loop{
+            message_content = match current_role {
+                Role::User => current_message.author.id.0.to_string() + "|" + &current_message.author.name + ": " + &current_message.content,
+                _ => current_message.content,
+            };
             context_messages.push(
-                generate_chat_messages(current_role, current_message.author.id.0.to_string() + "|" + &current_message.author.name + ": " + &current_message.content_safe(current_cache.as_ref()))
+                generate_chat_messages(
+                    current_role, 
+                    message_content,
+                    msg.clone()
+                )
+                .await
             );
+
+            let current_message_reference = current_message.message_reference.expect("Unable to get previous message in chain (1)");
+            let current_message_id = current_message_reference.message_id.expect("Unable to get ID of previous message in chain (2)");
 
             current_message = current_channel
             .id()
-            .message(&current_http, current_message.message_reference.expect("Unable to get previous message in chain (1)").message_id.expect("Unable to get ID of previous message in chain (2)"))
+            .message(&current_http, current_message_id)
             .await
             .expect("Unable to reieve previous message");
 
@@ -206,27 +277,44 @@ async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Vec<St
         }
     }
 
+    // Not needed now as GPT4-Turbo fixed the system message problem
     //context_messages.push(
     //    generate_chat_messages(Role::User, "Do not start any reply with 'Delta:', 'Delta Bot:' or anything similar. If you wish to mention someone, you can use <@[USER ID]>, user messages start with [USER ID]|[USER NAME]: and the ID for the mention can be pulled from there".to_owned())
     //);
 
     context_messages.push(
-        generate_chat_messages(Role::System, format!("{chatgpt_system_details} You are a cheerful android that responds to the name Delta, you care very much for your creator and do a lot of errands around your local town for them. She is also fond of using emotes in her replies. If someone asks you a question then you do your best to reply! Do not start any reply with 'Delta:', 'Delta Bot:' or anything similar. If you wish to mention someone, you can use <@[USER ID]>, user messages start with [USER ID]|[USER NAME]: and the ID for the mention can be pulled from there. Please don't put an @ in front of usernames when you reply, that is only needed when using the user ID. Make all of your responses longform").to_owned())
+        generate_chat_messages(
+            Role::System, 
+            format!("{chatgpt_system_details} You are a cheerful android that responds to the name Delta, you care very much for your creator and do a lot of errands around your local town for them. She is also fond of using emotes in her replies. If someone asks you a question then you do your best to reply! Do not start any reply with 'Delta:', 'Delta Bot:' or anything similar. If you wish to mention someone, you can use <@[USER ID]>, user messages start with [USER ID]|[USER NAME]: and the ID for the mention can be pulled from there. Please don't put an @ in front of usernames when you reply, that is only needed when using the user ID. Please do not mention people in the [USER ID]|[USER NAME] format, this is only for your information. Make all of your responses longform").to_owned(),
+            msg.clone()
+        )
+        .await
     );
 
     context_messages.reverse();
 
-    let chatgpt_request = CreateChatCompletionRequestArgs::default()
+    let chatgpt_request = match CreateChatCompletionRequestArgs::default()
         .model("gpt-4-1106-preview")
         .temperature(1.0)
         .messages(&**context_messages)
         .max_tokens(max_tokens)
         .build()
-            .expect("Unable to construct message reply");
+        {
+            Ok(t) => t,
+            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+        };
 
-    let response_choices = client.chat().create(chatgpt_request).await.expect("Unable to generate reply");
+    let response_choices = match client.chat().create(chatgpt_request).await
+        {
+            Ok(t) => t,
+            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+        };
     let response = &response_choices.choices[0].message.content;
-    let response_text = response.as_ref().expect("Unable to convert the GPT response to text");
+    let response_text = match response.as_ref()
+        {
+            Some(t) => t,
+            None => return_error(msg.clone(), "Unable to process stop typing".to_owned()).await.unwrap(),
+        };
     let mut return_vec: Vec<String> = Vec::new();
 
     if response_text.len() > 2000 {
@@ -259,7 +347,7 @@ async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Vec<St
 
 async fn generate_dalle (prompt_text: String, msg: Message) -> PathBuf {
     let client = Client::new();
-    let request = CreateImageRequestArgs::default()
+    let request = match CreateImageRequestArgs::default()
         .prompt(prompt_text)
         .n(1)
         .response_format(ResponseFormat::Url)
@@ -267,53 +355,84 @@ async fn generate_dalle (prompt_text: String, msg: Message) -> PathBuf {
         .user("Delta-Bot")
         .model(ImageModel::DallE3)
         .build()
-        .expect("Exception when building DALL-E image request");
+        {
+            Ok(t) => t,
+            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+        };
 
-    let response = client.images().create(request).await.expect("Exception when getting DALL-E image response");
+    let response = match client.images().create(request).await
+        {
+            Ok(t) => t,
+            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+        };
 
-    let mut image_path = response.save("./images").await.expect("Unable to save returned image");
+    let mut image_path = match response.save("./images").await
+        {
+            Ok(t) => t,
+            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+        };
 
     return image_path.remove(0);
 }
 
 async fn generate_runpod_image (prompt_text: String, model_ref: String, msg: Message) -> PathBuf {
-    let runpod_auth_key = env::var("RUNPOD_API_KEY").expect("");
+    let runpod_auth_key = match env::var("RUNPOD_API_KEY")
+        {
+            Ok(t) => t,
+            Err(e) => return_error(msg.clone(), "No runpod API key found".to_owned()).await.unwrap(),
+        };
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert("accept", HeaderValue::from_static("application/json"));
     headers.insert("authorization", HeaderValue::from_str(&runpod_auth_key).unwrap());
     headers.insert("content-type", HeaderValue::from_static("application/json"));
     let client = reqwest::Client::new();
-    let run_response: RunResponseObject = client.post(format!("https://api.runpod.ai/v2/{}/run", model_ref))
-       .headers(headers.clone())
-       .body(format!("{{
-           \"input\": {{
-              \"prompt\": \"{}\",
-               \"height\": 768,
-               \"width\": 768,
-               \"scheduler\": \"DDIM\",
-               \"num_inference_steps\": 40
-           }}
-       }}", prompt_text))
-       .send()
-       .await
-       .expect("Failed to start runpod job")
-       .json()
-       .await
-       .expect("Unable to convert JSON to object");
-
-    let mut status_response: OutputResponseObject;
-
-    loop {
-        status_response = client.post(format!("https://api.runpod.ai/v2/{}/status/{}", model_ref, run_response.id))
+    let run_response: Response = match client.post(format!("https://api.runpod.ai/v2/{}/run", model_ref))
         .headers(headers.clone())
+        .body(format!("{{
+            \"input\": {{
+                \"prompt\": \"{}\",
+                \"height\": 768,
+                \"width\": 768,
+                \"scheduler\": \"DDIM\",
+                \"num_inference_steps\": 40
+            }}
+        }}", prompt_text))
         .send()
         .await
-        .expect("Unable to send request to RunPod endpoint")
-        .json()
-        .await
-        .expect("Unable to convert JSON to object");
+        {
+            Ok(t) => t,
+            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+        };
+       
 
-        if !(status_response.status.clone().unwrap() == "IN_QUEUE" || status_response.status.clone().unwrap() == "IN_PROGRESS") {
+    let run_response_json: RunResponseObject = match run_response.json()
+        .await
+        {
+            Ok(t) => t,
+            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+        };
+
+    let mut status_response_json: OutputResponseObject;
+
+    loop {
+        let status_response = match client.post(format!("https://api.runpod.ai/v2/{}/status/{}", model_ref, run_response_json.id))
+            .headers(headers.clone())
+            .send()
+            .await
+            {
+                Ok(t) => t,
+                Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+            };
+        
+
+        status_response_json = match status_response.json()
+            .await
+            {
+                Ok(t) => t,
+                Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+            };
+
+        if !(status_response_json.status.clone().unwrap() == "IN_QUEUE" || status_response_json.status.clone().unwrap() == "IN_PROGRESS") {
             break;
         }
 
@@ -321,51 +440,81 @@ async fn generate_runpod_image (prompt_text: String, model_ref: String, msg: Mes
     }
     
     let image_path: PathBuf = Path::new(&format!("./images/{}.png", Uuid::from_u128(rand::random::<u128>()))).to_path_buf();
-    let mut image_data_response: &[u8] = &reqwest::get(status_response.output.unwrap()[0]
+    let mut image_data_response: Response = match reqwest::get(status_response_json.output.unwrap()[0]
         .image.to_owned())
         .await
-        .expect("Unable to download the generated RunPod image")
-        .bytes()
+        {
+            Ok(t) => t,
+            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+        };
+        
+    let image_data_response_bytes = match image_data_response.bytes()
         .await
-        .expect("Unable to convert image link to bytes");
+        {
+            Ok(t) => t,
+            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+        };
+
     let mut image_file = File::create(image_path.clone()).expect("Unable to create image file");
-    copy(&mut image_data_response, &mut image_file).expect("Error writing Runpod image file");
+    match copy(&mut image_data_response_bytes.as_ref(), &mut image_file)
+        {
+            Ok(t) => t,
+            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+        };
     return image_path;
 }
 
-async fn return_error (msg: Message, error_msg : String) {
+async fn return_error<T> (msg: Message, error_msg : String) -> Option<T> {
     let current_http = Http::new(&env::var("DISCORD_TOKEN")
-    .expect("Expected a token in the environment"));    
+    .expect("Expected a token in the environment - ERROR HANDLER"));    
+    // Not using the return_error function as it leads here and if there's an issue here, it'll just loop
     msg.reply(current_http, format!("Apologies, your request cannot be completed, the error is as follows:\n```{}```", error_msg))
     .await
-    .expect("Error showing an error");
+    .expect("Error showing an error - ERROR HANDLER");
+
+    panic!("{}", format!("An error has occured: {error_msg}"))
 }
 
-fn generate_chat_messages (current_role: Role, content: String) -> ChatCompletionRequestMessage {
+async fn generate_chat_messages (current_role: Role, content: String, msg: Message) -> ChatCompletionRequestMessage {
     if current_role == Role::Assistant {
-        return async_openai::types::ChatCompletionRequestMessage::Assistant(ChatCompletionRequestAssistantMessageArgs::default()
+        return async_openai::types::ChatCompletionRequestMessage::Assistant(match ChatCompletionRequestAssistantMessageArgs::default()
         .content(content)
         .build()
-        .expect("Unable to generate message to send to ChatGPT"))
+        {
+            Ok(t) => t,
+            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+        })
     } else if current_role == Role::Function {
-        return async_openai::types::ChatCompletionRequestMessage::Function(ChatCompletionRequestFunctionMessageArgs::default()
+        return async_openai::types::ChatCompletionRequestMessage::Function(match ChatCompletionRequestFunctionMessageArgs::default()
         .content(content)
         .build()
-        .expect("Unable to generate message to send to ChatGPT"))
+        {
+            Ok(t) => t,
+            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+        })
     } else if current_role == Role::System {
-        return async_openai::types::ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessageArgs::default()
+        return async_openai::types::ChatCompletionRequestMessage::System(match ChatCompletionRequestSystemMessageArgs::default()
         .content(content)
         .build()
-        .expect("Unable to generate message to send to ChatGPT"))
+        {
+            Ok(t) => t,
+            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+        })
     } else if current_role == Role::Tool {
-        return async_openai::types::ChatCompletionRequestMessage::Tool(ChatCompletionRequestToolMessageArgs::default()
+        return async_openai::types::ChatCompletionRequestMessage::Tool(match ChatCompletionRequestToolMessageArgs::default()
         .content(content)
         .build()
-        .expect("Unable to generate message to send to ChatGPT"))
+        {
+            Ok(t) => t,
+            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+        })
     } else {
-        return async_openai::types::ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessageArgs::default()
+        return async_openai::types::ChatCompletionRequestMessage::User(match ChatCompletionRequestUserMessageArgs::default()
         .content(content)
         .build()
-        .expect("Unable to generate message to send to ChatGPT"))
+        {
+            Ok(t) => t,
+            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+        })
     }
 }
