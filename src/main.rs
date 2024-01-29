@@ -7,10 +7,10 @@ use serenity::{
 };
 
 use async_openai::{
-    types::{Role, ChatCompletionRequestMessage, CreateChatCompletionRequestArgs, CreateImageRequestArgs, ImageSize, ResponseFormat, ImageModel, ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestFunctionMessageArgs, ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs, ChatCompletionRequestUserMessageArgs}, Client,
+    types::{ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestFunctionMessageArgs, ChatCompletionRequestMessage, ChatCompletionRequestMessageContentPart, ChatCompletionRequestMessageContentPartImageArgs, ChatCompletionRequestMessageContentPartTextArgs, ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs, ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs, CreateImageRequestArgs, ImageModel, ImageSize, ResponseFormat, Role}, Client,
 };
 use tokio::task;
-use reqwest::{header::HeaderValue, Response};
+use reqwest::{header::HeaderValue, Response, Url};
 use uuid::Uuid;
 
 #[derive(serde::Deserialize)]
@@ -230,12 +230,292 @@ async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Vec<St
     let chatgpt_system_details = env::var("SYSTEM_DETAILS").unwrap_or("".to_owned());
     let max_tokens: u16 = 4096;
     let mut message_content: String;
+    let mut message_vec_content: Vec<ChatCompletionRequestMessageContentPart> = Vec::new();
+    let mut message_model = "gpt-4-turbo-preview";
+    let mut using_vision = false;
 
     if current_message.message_reference.is_none() {
         message_content = current_message.author.id.0.to_string() + "|" + &current_message.author.name + ": " + &current_message.content;
+        if !current_message.attachments.is_empty() {
+            // OpenAI only supports JPGs, PNGs and static GIFs
+            // Until I impliment this better, I'm going to hedge my bets that any gifs will be animated
+            let image_extentions = vec!(
+                ".jpg",
+                ".jpeg",
+                ".png"
+            );
+            // Bunch of text formats, just don't want to try and process a 5MB binary or video
+            // Seriously, I've used the Wiki page for file formats, this should cover almost everything
+            // Plain text docs, scripting, programming source
+            let text_extentions = vec!(
+                ".txt",
+                ".json",
+                ".md",
+                ".adb",
+                ".ads",
+                ".ahk",
+                ".applescript",
+                ".scpt",
+                ".scptd",
+                ".as",
+                ".au3",
+                ".awk",
+                ".bat",
+                ".bas",
+                ".btm",
+                ".class",
+                ".cljs",
+                ".cmd",
+                ".coffee",
+                ".c",
+                ".cia",
+                ".cpp",
+                ".cs",
+                ".fs",
+                ".egg",
+                ".egt",
+                ".erb",
+                ".go",
+                ".hta",
+                ".ibi",
+                ".ici",
+                ".ijs",
+                ".ino",
+                ".ipynb",
+                ".itcl",
+                ".js",
+                ".jsfl",
+                ".kt",
+                ".lua",
+                ".m",
+                ".mrc",
+                ".ncf",
+                ".nuc",
+                ".nud",
+                ".nut",
+                ".nqp",
+                ".o",
+                ".pde",
+                ".php",
+                ".pl",
+                ".pm",
+                ".ps1",
+                ".ps1xml",
+                ".psc1",
+                ".psd1",
+                ".psm1",
+                ".py",
+                ".pyc",
+                ".pyo",
+                ".r",
+                ".rb",
+                ".rdp",
+                ".red",
+                ".rs",
+                ".sb2",
+                ".sb3",
+                ".scpt",
+                ".scptd",
+                ".sdl",
+                ".sh",
+                ".sprite3",
+                ".spwn",
+                ".syjs",
+                ".sypy",
+                ".tcl",
+                ".tns",
+                ".ts",
+                ".vbs",
+                ".xpl",
+                ".ebuild",
+                ".csv",
+                ".html",
+                ".css",
+                ".ini",
+                ".tsv",
+                ".yaml",
+                ".rst",
+                ".adoc",
+                ".asciidoc",
+                ".yni",
+                ".cnf",
+                ".conf",
+                ".cfg",
+                ".log",
+                ".asc",
+                ".text",
+                ".ADA",
+                ".ADB",
+                ".ADS",
+                ".ASM",
+                ".S",
+                ".BAS",
+                ".BB",
+                ".BMX",
+                ".C",
+                ".CLJ",
+                ".CLS",
+                ".COB",
+                ".CBL",
+                ".CPP",
+                ".CC",
+                ".CXX",
+                ".CBP",
+                ".CS",
+                ".CSPROJ",
+                ".D",
+                ".DBA",
+                ".DBPro123",
+                ".E",
+                ".EFS",
+                ".EGT",
+                ".EL",
+                ".FOR",
+                ".FTN",
+                ".F",
+                ".F77",
+                ".F90",
+                ".FRM",
+                ".FRX",
+                ".FTH",
+                ".GED",
+                ".GM6",
+                ".GMD",
+                ".GMK",
+                ".GML",
+                ".GO",
+                ".H",
+                ".HPP",
+                ".HXX",
+                ".HS",
+                ".HX",
+                ".I",
+                ".INC",
+                ".JAVA",
+                ".JS",
+                ".L",
+                ".LGT",
+                ".LISP",
+                ".M",
+                ".M4",
+                ".ML",
+                ".MSQR",
+                ".N",
+                ".NB",
+                ".P",
+                ".PAS",
+                ".PP",
+                ".PHP",
+                ".PHP3",
+                ".PHP4",
+                ".PHP5",
+                ".PHPS",
+                ".Phtml",
+                ".PIV",
+                ".PL",
+                ".PM",
+                ".PLI",
+                ".PL1",
+                ".PRG",
+                ".PRO",
+                ".POL",
+                ".PY",
+                ".R",
+                ".raku",
+                ".rakumod",
+                ".rakudoc",
+                ".rakutest",
+                ".nqp",
+                ".RED",
+                ".REDS",
+                ".RB",
+                ".RESX",
+                ".RC",
+                ".RC2",
+                ".RKT",
+                ".RKTL",
+                ".RS",
+                ".SCALA",
+                ".SCI",
+                ".SCE",
+                ".SCM",
+                ".SD7",
+                ".SKB",
+                ".SKC",
+                ".SKD",
+                ".SKF",
+                ".SKG",
+                ".SKI",
+                ".SKK",
+                ".SKM",
+                ".SKO",
+                ".SKP",
+                ".SKQ",
+                ".SKS",
+                ".SKT",
+                ".SKZ",
+                ".SLN",
+                ".SPIN",
+                ".STK",
+                ".SWG",
+                ".TCL",
+                ".VAP",
+                ".VB",
+                ".VBG",
+                ".VBP",
+                ".VIP",
+                ".VBPROJ",
+                ".VCPROJ",
+                ".VDPROJ",
+                ".XPL",
+                ".XQ",
+                ".XSL",
+                ".Y"
+            );
+            for message_attachment in current_message.attachments {
+                let attachment_link = message_attachment.url;
+                let mut parsed_attachment_link = match Url::parse(&attachment_link)
+                    {
+                        Ok(t) => t,
+                        Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                    };
+                parsed_attachment_link.set_query(None);
+                let parsed_attachement_link_string = parsed_attachment_link.to_string();
+
+                if image_extentions.iter().any(|suffix| parsed_attachement_link_string.ends_with(suffix)) {
+                    message_vec_content.push(ChatCompletionRequestMessageContentPartImageArgs::default().image_url(attachment_link).build().unwrap().into());
+
+                    if !using_vision {
+                        message_model = "gpt-4-vision-preview";
+                        using_vision = true;
+                    }
+                }
+                else if text_extentions.iter().any(|suffix| parsed_attachement_link_string.ends_with(suffix)) {
+                    let text_response = match reqwest::get(attachment_link).await
+                    {
+                        Ok(t) => t,
+                        Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                    };
+                    let text_content = match text_response.text().await
+                    {
+                        Ok(t) => t,
+                        Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                    };
+                    let mut attachment_path_split = parsed_attachement_link_string.rsplit("/");
+                    let attachment_name = match attachment_path_split.next()
+                    {
+                        Some(t) => t,
+                        None => return_error(msg.clone(), "Unable to process stop typing".to_owned()).await.unwrap(),
+                    };
+
+                    message_vec_content.push(ChatCompletionRequestMessageContentPartTextArgs::default().text(format!("Content of the file: {attachment_name} ```{text_content}```")).build().unwrap().into());
+                }
+            }
+        }
         context_messages.push(
             generate_chat_messages(
                 current_role, 
+                message_vec_content,
                 message_content,
                 msg.clone()
             )
@@ -247,9 +527,286 @@ async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Vec<St
                 Role::User => current_message.author.id.0.to_string() + "|" + &current_message.author.name + ": " + &current_message.content,
                 _ => current_message.content,
             };
+            if !current_message.attachments.is_empty() {
+                // OpenAI only supports JPGs, PNGs and static GIFs
+                // Until I impliment this better, I'm going to hedge my bets that any gifs will be animated
+                let image_extentions = vec!(
+                    ".jpg",
+                    ".jpeg",
+                    ".png"
+                );
+                // Bunch of text formats, just don't want to try and process a 5MB binary or video
+                // Seriously, I've used the Wiki page for file formats, this should cover almost everything
+                // Plain text docs, scripting, programming source
+                let text_extentions = vec!(
+                    ".txt",
+                    ".json",
+                    ".md",
+                    ".adb",
+                    ".ads",
+                    ".ahk",
+                    ".applescript",
+                    ".scpt",
+                    ".scptd",
+                    ".as",
+                    ".au3",
+                    ".awk",
+                    ".bat",
+                    ".bas",
+                    ".btm",
+                    ".class",
+                    ".cljs",
+                    ".cmd",
+                    ".coffee",
+                    ".c",
+                    ".cia",
+                    ".cpp",
+                    ".cs",
+                    ".fs",
+                    ".egg",
+                    ".egt",
+                    ".erb",
+                    ".go",
+                    ".hta",
+                    ".ibi",
+                    ".ici",
+                    ".ijs",
+                    ".ino",
+                    ".ipynb",
+                    ".itcl",
+                    ".js",
+                    ".jsfl",
+                    ".kt",
+                    ".lua",
+                    ".m",
+                    ".mrc",
+                    ".ncf",
+                    ".nuc",
+                    ".nud",
+                    ".nut",
+                    ".nqp",
+                    ".o",
+                    ".pde",
+                    ".php",
+                    ".pl",
+                    ".pm",
+                    ".ps1",
+                    ".ps1xml",
+                    ".psc1",
+                    ".psd1",
+                    ".psm1",
+                    ".py",
+                    ".pyc",
+                    ".pyo",
+                    ".r",
+                    ".rb",
+                    ".rdp",
+                    ".red",
+                    ".rs",
+                    ".sb2",
+                    ".sb3",
+                    ".scpt",
+                    ".scptd",
+                    ".sdl",
+                    ".sh",
+                    ".sprite3",
+                    ".spwn",
+                    ".syjs",
+                    ".sypy",
+                    ".tcl",
+                    ".tns",
+                    ".ts",
+                    ".vbs",
+                    ".xpl",
+                    ".ebuild",
+                    ".csv",
+                    ".html",
+                    ".css",
+                    ".ini",
+                    ".tsv",
+                    ".yaml",
+                    ".rst",
+                    ".adoc",
+                    ".asciidoc",
+                    ".yni",
+                    ".cnf",
+                    ".conf",
+                    ".cfg",
+                    ".log",
+                    ".asc",
+                    ".text",
+                    ".ADA",
+                    ".ADB",
+                    ".ADS",
+                    ".ASM",
+                    ".S",
+                    ".BAS",
+                    ".BB",
+                    ".BMX",
+                    ".C",
+                    ".CLJ",
+                    ".CLS",
+                    ".COB",
+                    ".CBL",
+                    ".CPP",
+                    ".CC",
+                    ".CXX",
+                    ".CBP",
+                    ".CS",
+                    ".CSPROJ",
+                    ".D",
+                    ".DBA",
+                    ".DBPro123",
+                    ".E",
+                    ".EFS",
+                    ".EGT",
+                    ".EL",
+                    ".FOR",
+                    ".FTN",
+                    ".F",
+                    ".F77",
+                    ".F90",
+                    ".FRM",
+                    ".FRX",
+                    ".FTH",
+                    ".GED",
+                    ".GM6",
+                    ".GMD",
+                    ".GMK",
+                    ".GML",
+                    ".GO",
+                    ".H",
+                    ".HPP",
+                    ".HXX",
+                    ".HS",
+                    ".HX",
+                    ".I",
+                    ".INC",
+                    ".JAVA",
+                    ".JS",
+                    ".L",
+                    ".LGT",
+                    ".LISP",
+                    ".M",
+                    ".M4",
+                    ".ML",
+                    ".MSQR",
+                    ".N",
+                    ".NB",
+                    ".P",
+                    ".PAS",
+                    ".PP",
+                    ".PHP",
+                    ".PHP3",
+                    ".PHP4",
+                    ".PHP5",
+                    ".PHPS",
+                    ".Phtml",
+                    ".PIV",
+                    ".PL",
+                    ".PM",
+                    ".PLI",
+                    ".PL1",
+                    ".PRG",
+                    ".PRO",
+                    ".POL",
+                    ".PY",
+                    ".R",
+                    ".raku",
+                    ".rakumod",
+                    ".rakudoc",
+                    ".rakutest",
+                    ".nqp",
+                    ".RED",
+                    ".REDS",
+                    ".RB",
+                    ".RESX",
+                    ".RC",
+                    ".RC2",
+                    ".RKT",
+                    ".RKTL",
+                    ".RS",
+                    ".SCALA",
+                    ".SCI",
+                    ".SCE",
+                    ".SCM",
+                    ".SD7",
+                    ".SKB",
+                    ".SKC",
+                    ".SKD",
+                    ".SKF",
+                    ".SKG",
+                    ".SKI",
+                    ".SKK",
+                    ".SKM",
+                    ".SKO",
+                    ".SKP",
+                    ".SKQ",
+                    ".SKS",
+                    ".SKT",
+                    ".SKZ",
+                    ".SLN",
+                    ".SPIN",
+                    ".STK",
+                    ".SWG",
+                    ".TCL",
+                    ".VAP",
+                    ".VB",
+                    ".VBG",
+                    ".VBP",
+                    ".VIP",
+                    ".VBPROJ",
+                    ".VCPROJ",
+                    ".VDPROJ",
+                    ".XPL",
+                    ".XQ",
+                    ".XSL",
+                    ".Y"
+                );
+                for message_attachment in current_message.attachments {
+                    let attachment_link = message_attachment.url;
+                    let mut parsed_attachment_link = match Url::parse(&attachment_link)
+                        {
+                            Ok(t) => t,
+                            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                        };
+                    parsed_attachment_link.set_query(None);
+                    let parsed_attachement_link_string = parsed_attachment_link.to_string();
+    
+                    if image_extentions.iter().any(|suffix| parsed_attachement_link_string.ends_with(suffix)) {
+                        message_vec_content.push(ChatCompletionRequestMessageContentPartImageArgs::default().image_url(attachment_link).build().unwrap().into());
+    
+                        if !using_vision {
+                            message_model = "gpt-4-vision-preview";
+                            using_vision = true;
+                        }
+                    }
+                    else if text_extentions.iter().any(|suffix| parsed_attachement_link_string.ends_with(suffix)) {
+                        let text_response = match reqwest::get(attachment_link).await
+                        {
+                            Ok(t) => t,
+                            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                        };
+                        let text_content = match text_response.text().await
+                        {
+                            Ok(t) => t,
+                            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                        };
+                        let mut attachment_path_split = parsed_attachement_link_string.rsplit("/");
+                        let attachment_name = match attachment_path_split.next()
+                        {
+                            Some(t) => t,
+                            None => return_error(msg.clone(), "Unable to process stop typing".to_owned()).await.unwrap(),
+                        };
+    
+                        message_vec_content.push(ChatCompletionRequestMessageContentPartTextArgs::default().text(format!("Content of the file: {attachment_name} ```{text_content}```")).build().unwrap().into());
+                    }
+                }
+            }
             context_messages.push(
                 generate_chat_messages(
                     current_role, 
+                    message_vec_content.clone(),
                     message_content,
                     msg.clone()
                 )
@@ -285,7 +842,8 @@ async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Vec<St
     context_messages.push(
         generate_chat_messages(
             Role::System, 
-            format!("{chatgpt_system_details} You are a cheerful android that responds to the name Delta, you care very much for your creator and do a lot of errands around your local town for them. She is also fond of using emotes in her replies. If someone asks you a question then you do your best to reply! Do not start any reply with 'Delta:', 'Delta Bot:' or anything similar. If you wish to mention someone, you can use <@[USER ID]>, user messages start with [USER ID]|[USER NAME]: and the ID for the mention can be pulled from there. Please don't put an @ in front of usernames when you reply, that is only needed when using the user ID. Please do not mention people in the [USER ID]|[USER NAME] format, this is only for your information. Make all of your responses longform").to_owned(),
+            Vec::new(),
+            format!("{chatgpt_system_details} You are a cheerful android that responds to the name Delta, you care very much for your creator and do a lot of errands around your local town for them. She is also fond of using emotes in her replies. If someone asks you a question then you do your best to reply! Do not start any reply with 'Delta:', 'Delta Bot:' or anything similar. If you wish to mention someone, you can use <@[USER ID]>, user messages start with [USER ID]|[USER NAME]: and the ID for the mention can be pulled from there. Please don't put an @ in front of usernames when you reply, that is only needed when using the user ID. Please do not mention people in the [USER ID]|[USER NAME] format, this is only for your information, please do not start your own messages with this format. Make all of your responses longform").to_owned(),
             msg.clone()
         )
         .await
@@ -294,7 +852,7 @@ async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Vec<St
     context_messages.reverse();
 
     let chatgpt_request = match CreateChatCompletionRequestArgs::default()
-        .model("gpt-4-1106-preview")
+        .model(message_model)
         .temperature(1.0)
         .messages(&**context_messages)
         .max_tokens(max_tokens)
@@ -475,46 +1033,46 @@ async fn return_error<T> (msg: Message, error_msg : String) -> Option<T> {
     panic!("{}", format!("An error has occured: {error_msg}"))
 }
 
-async fn generate_chat_messages (current_role: Role, content: String, msg: Message) -> ChatCompletionRequestMessage {
+async fn generate_chat_messages (current_role: Role, content: Vec<ChatCompletionRequestMessageContentPart>, content_string_only: String, msg: Message) -> ChatCompletionRequestMessage {
     if current_role == Role::Assistant {
-        return async_openai::types::ChatCompletionRequestMessage::Assistant(match ChatCompletionRequestAssistantMessageArgs::default()
-        .content(content)
+        return match ChatCompletionRequestAssistantMessageArgs::default()
+        .content(content_string_only)
         .build()
         {
-            Ok(t) => t,
+            Ok(t) => async_openai::types::ChatCompletionRequestMessage::Assistant(t),
             Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
-        })
+        }
     } else if current_role == Role::Function {
-        return async_openai::types::ChatCompletionRequestMessage::Function(match ChatCompletionRequestFunctionMessageArgs::default()
-        .content(content)
+        return match ChatCompletionRequestFunctionMessageArgs::default()
+        .content(content_string_only)
         .build()
         {
-            Ok(t) => t,
+            Ok(t) => async_openai::types::ChatCompletionRequestMessage::Function(t),
             Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
-        })
+        }
     } else if current_role == Role::System {
-        return async_openai::types::ChatCompletionRequestMessage::System(match ChatCompletionRequestSystemMessageArgs::default()
-        .content(content)
+        return match ChatCompletionRequestSystemMessageArgs::default()
+        .content(content_string_only)
         .build()
         {
-            Ok(t) => t,
+            Ok(t) => async_openai::types::ChatCompletionRequestMessage::System(t),
             Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
-        })
+        }
     } else if current_role == Role::Tool {
-        return async_openai::types::ChatCompletionRequestMessage::Tool(match ChatCompletionRequestToolMessageArgs::default()
-        .content(content)
+        return match ChatCompletionRequestToolMessageArgs::default()
+        .content(content_string_only)
         .build()
         {
-            Ok(t) => t,
+            Ok(t) => async_openai::types::ChatCompletionRequestMessage::Tool(t),
             Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
-        })
+        }
     } else {
-        return async_openai::types::ChatCompletionRequestMessage::User(match ChatCompletionRequestUserMessageArgs::default()
+        return match ChatCompletionRequestUserMessageArgs::default()
         .content(content)
         .build()
         {
-            Ok(t) => t,
+            Ok(t) => async_openai::types::ChatCompletionRequestMessage::User(t),
             Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
-        })
+        }
     }
 }
