@@ -12,12 +12,15 @@ use async_openai::{
 use tokio::task;
 use reqwest::{header::HeaderValue, Response, Url};
 use uuid::Uuid;
+use base64::{Engine as _, alphabet, engine::{self, general_purpose}};
 
 #[derive(serde::Deserialize)]
 struct FunctionData {
     function_command: String,
     function_type: String,
-    function_api_key: String
+    function_api_key: String,
+    prompt_prefix: String,
+    prompt_suffix: String
 }
 
 #[derive(serde::Deserialize)]
@@ -122,14 +125,18 @@ impl EventHandler for Handler {
                             };
                         let command_function_str = current_function.function_type.as_str();
                         let command_api_str = current_function.function_api_key;
+                        let command_data_prefix = current_function.prompt_prefix;
+                        let command_data_suffix = current_function.prompt_suffix;
                         let image_path: Option<PathBuf>;
+                        let image_attachments = serenity::builder::CreateAttachment;
+                        let full_command_string: String = format!("{command_data_prefix}{command_data}{command_data_suffix}");
 
                         match command_function_str {
-                            "openai_dalle"=>{
-                                image_path = Some(generate_dalle(command_data.to_owned(), msg.clone()).await);
-                            }
+                            //"openai_dalle"=>{
+                            //    image_path = Some(generate_dalle(full_command_string, msg.clone()).await);
+                            //}
                             "runpod_image"=>{
-                                image_path = Some(generate_runpod_image(command_data.to_owned(), command_api_str, msg.clone()).await);
+                                image_attachments = Some(generate_runpod_image(full_command_string, command_api_str, msg.clone()).await);
                             }
                             _=>{
                                 // If a reply can't be made... is there a point in trying to reply with a different error?
@@ -504,8 +511,8 @@ async fn generate_runpod_image (prompt_text: String, model_ref: String, msg: Mes
         .body(format!("{{
             \"input\": {{
                 \"prompt\": \"{}\",
-                \"height\": 768,
-                \"width\": 768,
+                \"height\": 1024,
+                \"width\": 1024,
                 \"scheduler\": \"DDIM\",
                 \"num_inference_steps\": 40
             }}
