@@ -1,9 +1,7 @@
 use std::{borrow::Borrow, env, fs::{File, self}, io::copy, path::{PathBuf, Path}, result, thread::sleep, time::Duration};
 
 use serenity::{
-    async_trait,
-    model::{channel::Message, gateway::Ready},
-    prelude::*, client::Cache, http::{CacheHttp, Http, Typing}, builder::CreateMessage,
+    all::AttachmentType, async_trait, builder::{CreateAllowedMentions, CreateAttachment, CreateMessage}, client::Cache, http::{CacheHttp, Http, Typing}, model::{channel::Message, gateway::Ready}, prelude::*
 };
 
 use async_openai::{
@@ -12,7 +10,7 @@ use async_openai::{
 use tokio::task;
 use reqwest::{header::HeaderValue, Response, Url};
 use uuid::Uuid;
-use base64::{Engine as _, alphabet, engine::{self, general_purpose}};
+use base64::prelude::*;
 
 #[derive(serde::Deserialize)]
 struct FunctionData {
@@ -36,7 +34,8 @@ struct RunResponseObject {
 
 #[derive(serde::Deserialize)]
 struct ImageGenOutput {
-    image: String,
+    image_url: String,
+    images: Vec<String>,
     seed: u32
 }
 
@@ -45,7 +44,7 @@ struct OutputResponseObject {
     delayTime: Option<u64>,
     executionTime: Option<u64>,
     id: Option<String>,
-    output: Option<Vec<ImageGenOutput>>,
+    output: Option<ImageGenOutput>,
     status: Option<String>
 }
 
@@ -90,11 +89,7 @@ impl EventHandler for Handler {
                 }
                 if msg.author.id != ctx.cache.current_user().id {
                     if msg.content.starts_with("!delta") {
-                        let typing = match Typing::start(ctx.clone().http, msg.channel_id.into())
-                            {
-                                Ok(t) => t,
-                                Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
-                            };
+                        let typing = Typing::start(ctx.clone().http, msg.channel_id.into());
                         let msg_safe = msg.borrow().content_safe(ctx.clone().cache);
                         let mut full_command = msg_safe.splitn(2, " ");
                         let command_string = match full_command.next()
@@ -128,7 +123,7 @@ impl EventHandler for Handler {
                         let command_data_prefix = current_function.prompt_prefix;
                         let command_data_suffix = current_function.prompt_suffix;
                         let image_path: Option<PathBuf>;
-                        let image_attachments = serenity::builder::CreateAttachment;
+                        let mut image_attachments: Vec<CreateAttachment> = Vec::default();
                         let full_command_string: String = format!("{command_data_prefix}{command_data}{command_data_suffix}");
 
                         match command_function_str {
@@ -136,7 +131,7 @@ impl EventHandler for Handler {
                             //    image_path = Some(generate_dalle(full_command_string, msg.clone()).await);
                             //}
                             "runpod_image"=>{
-                                image_attachments = Some(generate_runpod_image(full_command_string, command_api_str, msg.clone()).await);
+                                image_attachments = generate_runpod_image(full_command_string, command_api_str, msg.clone()).await;
                             }
                             _=>{
                                 // If a reply can't be made... is there a point in trying to reply with a different error?
@@ -145,56 +140,40 @@ impl EventHandler for Handler {
                             }
                         }
 
-                        let image_file_result = &tokio::fs::File::open(image_path.clone().unwrap()).await;
-                        let image_file = [(match image_file_result
-                            {
-                                Ok(t) => t,
-                                Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
-                            }, 
-                            "image.png")];
-
-                        match msg.borrow().channel_id.send_message(ctx.http, |message: &mut CreateMessage<'_>| {
-                            message.reference_message(&msg);
-                            message.allowed_mentions(|am| {
-                                am.replied_user(true);
-                                am
-                            });
-                            message.files(image_file);
-                            message.content(format!("{}Hello, thank you for the request! Here is the image you've requested!", message_prefix));
-                            message
-                        }).await
+                        let message_builder = CreateMessage::new()
+                            .reference_message(&msg)
+                            .allowed_mentions(CreateAllowedMentions::new().users(vec![msg.clone().author.id]))
+                            .files(image_attachments)
+                            .content(format!("{}Hello, thank you for the request! Here is the image you've requested!", message_prefix));
+                        
+                        match msg.borrow().channel_id.send_message(ctx.http, message_builder).await
                             {
                                 Ok(t) => t,
                                 Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
                             };
-                        match typing.stop()
-                            {
-                                Some(t) => t,
-                                None => return_error(msg.clone(), "Unable to process stop typing after sending image".to_owned()).await.unwrap(),
-                            };
-                        match fs::remove_file(image_path.unwrap())
-                            {
-                                Ok(t) => t,
-                                Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
-                            };
+                        typing.stop();
                     } else if msg.mentions_user_id(ctx.cache.current_user().id) {
-                        let typing = match Typing::start(ctx.clone().http, msg.channel_id.into())
-                            {
-                                Ok(t) => t,
-                                Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
-                            };
+                        let http_cache = ctx.clone().http;
+                        let current_user_id: u64 = ctx.cache.current_user().id.into();
+                        let typing = Typing::start(http_cache.clone(), msg.channel_id.into());
                         let mut reply_msg = msg.clone();
-                        let response_vec = text_reply(msg.clone(), &ctx, ctx.cache.current_user().id.into()).await;
+                        let response_vec = text_reply(msg.clone(), &ctx, current_user_id).await;
                         for response in response_vec {
+                            let message_builder = CreateMessage::new()
+                                .reference_message(&msg)
+                                .allowed_mentions(CreateAllowedMentions::new().users(vec![msg.clone().author.id]))
+                                .content(format!("{}{}", message_prefix, response));
                             // If the reply cannot be sent, then sending an error message might be pointless
                             // If the issue is within generating the text, that will be handled before now
-                            reply_msg = reply_msg.reply(&ctx.http, format!("{}{}", message_prefix, response)).await.expect("Error sending message");
-                        }
-                        match typing.stop()
+                            //reply_msg = reply_msg.reply(&ctx.http, format!("{}{}", message_prefix, response)).await.expect("Error sending message");
+
+                            match msg.borrow().channel_id.send_message(http_cache.clone(), message_builder).await
                             {
-                                Some(t) => t,
-                                None => return_error(msg.clone(), "Unable to process stop typing".to_owned()).await.unwrap(),
+                                Ok(t) => t,
+                                Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
                             };
+                        }
+                        typing.stop();
 
                     }
                 }
@@ -242,7 +221,7 @@ async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Vec<St
     let mut using_vision = false;
 
     if current_message.message_reference.is_none() {
-        message_content = current_message.author.id.0.to_string() + "|" + &current_message.author.name + ": " + &current_message.content;
+        message_content = current_message.author.id.to_string() + "|" + &current_message.author.name + ": " + &current_message.content;
         message_vec_content.push(ChatCompletionRequestMessageContentPartTextArgs::default().text(message_content.clone()).build().unwrap().into());
         if !current_message.attachments.is_empty() {
             // OpenAI only supports JPGs, PNGs and static GIFs
@@ -309,7 +288,7 @@ async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Vec<St
         loop{
             message_vec_content = Vec::new();
             message_content = match current_role {
-                Role::User => current_message.author.id.0.to_string() + "|" + &current_message.author.name + ": " + &current_message.content,
+                Role::User => current_message.author.id.to_string() + "|" + &current_message.author.name + ": " + &current_message.content,
                 _ => current_message.content,
             };
             message_vec_content.push(ChatCompletionRequestMessageContentPartTextArgs::default().text(message_content.clone()).build().unwrap().into());
@@ -495,7 +474,7 @@ async fn generate_dalle (prompt_text: String, msg: Message) -> PathBuf {
     return image_path.remove(0);
 }
 
-async fn generate_runpod_image (prompt_text: String, model_ref: String, msg: Message) -> PathBuf {
+async fn generate_runpod_image (prompt_text: String, model_ref: String, msg: Message) -> Vec<CreateAttachment> {
     let runpod_auth_key = match env::var("RUNPOD_API_KEY")
         {
             Ok(t) => t,
@@ -558,30 +537,26 @@ async fn generate_runpod_image (prompt_text: String, model_ref: String, msg: Mes
 
         sleep(Duration::from_secs(2));
     }
-    
-    let image_path: PathBuf = Path::new(&format!("./images/{}.png", Uuid::from_u128(rand::random::<u128>()))).to_path_buf();
-    let mut image_data_response: Response = match reqwest::get(status_response_json.output.unwrap()[0]
-        .image.to_owned())
-        .await
-        {
-            Ok(t) => t,
-            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
-        };
-        
-    let image_data_response_bytes = match image_data_response.bytes()
-        .await
-        {
-            Ok(t) => t,
-            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
-        };
 
-    let mut image_file = File::create(image_path.clone()).expect("Unable to create image file");
-    match copy(&mut image_data_response_bytes.as_ref(), &mut image_file)
-        {
-            Ok(t) => t,
-            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
-        };
-    return image_path;
+    let mut image_attachments: Vec<CreateAttachment> = Vec::default();
+
+    let image_output = match (status_response_json.output)
+    {
+        Some(t) => t,
+        None => return_error(msg.clone(), "No generated image data found".to_owned()).await.unwrap(),
+    };
+
+    for (index, base64_image) in image_output.images.iter().enumerate() {
+        let base64_image_cleaned = base64_image.replace("data:image/png;base64,", "");
+        match BASE64_STANDARD.decode(&base64_image_cleaned) {
+            Ok(bytes) => image_attachments.push(CreateAttachment::bytes(bytes, format!("image_output_{index}.png"))),
+            Err(err) => {
+                println!("At least one image returned an exception/n{}", err);
+            }
+        }
+    }
+    
+    return image_attachments;
 }
 
 async fn return_error<T> (msg: Message, error_msg : String) -> Option<T> {
