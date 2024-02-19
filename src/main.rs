@@ -1,11 +1,11 @@
-use std::{borrow::Borrow, env, fs::{File, self}, io::copy, path::{PathBuf, Path}, result, thread::sleep, time::Duration};
+use std::{borrow::Borrow, env, fs::{self, File}, io::copy, path::{Path, PathBuf}, result, sync::Arc, thread::sleep, time::Duration};
 
 use serenity::{
     all::AttachmentType, async_trait, builder::{CreateAllowedMentions, CreateAttachment, CreateMessage}, client::Cache, http::{CacheHttp, Http, Typing}, model::{channel::Message, gateway::Ready}, prelude::*
 };
 
 use async_openai::{
-    types::{ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestFunctionMessageArgs, ChatCompletionRequestMessage, ChatCompletionRequestMessageContentPart, ChatCompletionRequestMessageContentPartImageArgs, ChatCompletionRequestMessageContentPartTextArgs, ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs, ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs, CreateImageRequestArgs, ImageModel, ImageSize, ResponseFormat, Role}, Client,
+    types::{ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestFunctionMessageArgs, ChatCompletionRequestMessage, ChatCompletionRequestMessageContentPart, ChatCompletionRequestMessageContentPartImageArgs, ChatCompletionRequestMessageContentPartTextArgs, ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs, ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs, CreateImageRequestArgs, Image, ImageModel, ImageSize, ResponseFormat, Role}, Client,
 };
 use tokio::task;
 use reqwest::{header::HeaderValue, Response, Url};
@@ -127,9 +127,9 @@ impl EventHandler for Handler {
                         let full_command_string: String = format!("{command_data_prefix}{command_data}{command_data_suffix}");
 
                         match command_function_str {
-                            //"openai_dalle"=>{
-                            //    image_path = Some(generate_dalle(full_command_string, msg.clone()).await);
-                            //}
+                            "openai_dalle"=>{
+                                image_attachments = generate_dalle(full_command_string, msg.clone()).await;
+                            }
                             "runpod_image"=>{
                                 image_attachments = generate_runpod_image(full_command_string, command_api_str, msg.clone()).await;
                             }
@@ -444,12 +444,12 @@ async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Vec<St
     return return_vec;
 }
 
-async fn generate_dalle (prompt_text: String, msg: Message) -> PathBuf {
+async fn generate_dalle (prompt_text: String, msg: Message) -> Vec<CreateAttachment> {
     let client = Client::new();
     let request = match CreateImageRequestArgs::default()
         .prompt(prompt_text)
         .n(1)
-        .response_format(ResponseFormat::Url)
+        .response_format(ResponseFormat::B64Json)
         .size(ImageSize::S1024x1024)
         .user("Delta-Bot")
         .model(ImageModel::DallE3)
@@ -464,14 +464,30 @@ async fn generate_dalle (prompt_text: String, msg: Message) -> PathBuf {
             Ok(t) => t,
             Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
         };
+    let mut image_attachments: Vec<CreateAttachment> = Vec::default();
 
-    let mut image_path = match response.save("./images").await
-        {
-            Ok(t) => t,
-            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
-        };
 
-    return image_path.remove(0);
+    for (index, image_data) in response.data.iter().enumerate() {
+        let mut image_data_base_64 = "".to_owned();
+
+        match &**image_data {
+            Image::B64Json {b64_json, revised_prompt: _} => {
+                image_data_base_64 = b64_json.as_str().to_owned();
+            },
+            Image::Url {..} => {
+                return_error(msg.clone(), "Expected Base64 from DALL-E, got a different output instead".to_owned()).await.unwrap()
+            }
+        }
+        let base64_image_cleaned = image_data_base_64.replace("data:image/png;base64,", "");
+        match BASE64_STANDARD.decode(&base64_image_cleaned) {
+            Ok(bytes) => image_attachments.push(CreateAttachment::bytes(bytes, format!("image_output_{index}.png"))),
+            Err(err) => {
+                println!("At least one image returned an exception/n{}", err);
+            }
+        }
+    }
+
+    return image_attachments;
 }
 
 async fn generate_runpod_image (prompt_text: String, model_ref: String, msg: Message) -> Vec<CreateAttachment> {
@@ -492,7 +508,7 @@ async fn generate_runpod_image (prompt_text: String, model_ref: String, msg: Mes
                 \"prompt\": \"{}\",
                 \"height\": 1024,
                 \"width\": 1024,
-                \"scheduler\": \"DDIM\",
+                \"scheduler\": \"K_EULER\",
                 \"num_inference_steps\": 40
             }}
         }}", prompt_text))
