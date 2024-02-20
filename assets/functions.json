@@ -13,13 +13,6 @@
             "function_api_key": "sd-openjourney",
             "prompt_prefix": "",
             "prompt_suffix": ""
-        },
-        {
-            "function_command": "!delta-animegen",
-            "function_type": "runpod_image",
-            "function_api_key": "1eqncdwtcr5d2o",
-            "prompt_prefix": "score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up, ",
-            "prompt_suffix": ", source_anime, rating_safe"
         }
     ]
 }
