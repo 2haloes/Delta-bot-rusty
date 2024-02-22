@@ -11,7 +11,7 @@ use serenity::{
 };
 
 use tokio::task;
-use tasks::{handle_errors::return_error, image_generation::{generate_dalle, generate_runpod_image}, text_generation::text_reply};
+use tasks::{handle_errors::{return_error, UnwrapOrReturnError}, image_generation::{generate_dalle, generate_runpod_image}, text_generation::text_reply};
 
 #[derive(serde::Deserialize)]
 struct FunctionData {
@@ -29,6 +29,12 @@ struct JsonObject{
 
 struct Handler;
 
+/*
+    This EventHandler is used by serenity to process any events that happen
+    This program currently supports
+        - message - for when any messages are recieved wherever the bot has access to messages (includes DMs)
+        - ready - for when the bot has successfully connected to Discord
+*/
 #[async_trait]
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
@@ -44,16 +50,15 @@ impl EventHandler for Handler {
                 } else {
                     message_prefix = "".to_string();
                 }
+                /*
+                    This if statement splits between a text reply and using a function from functions.json
+                 */
                 if msg.author.id != ctx.cache.current_user().id {
                     if msg.content.starts_with("!delta") {
                         let typing = Typing::start(ctx.clone().http, msg.channel_id.into());
                         let msg_safe = msg.borrow().content_safe(ctx.clone().cache);
                         let mut full_command = msg_safe.splitn(2, " ");
-                        let command_string = match full_command.next()
-                            {
-                                Some(t) => t,
-                                None => return_error(msg.clone(), "Unable to process command string".to_owned()).await.unwrap(),
-                            };
+                        let command_string = full_command.next().UnwrapOrReturnError(msg.clone(), "Unable to process command string".to_string());
                         let command_data = match full_command.next()
                             {
                                 Some(t) => t,
