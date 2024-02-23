@@ -92,7 +92,11 @@ pub async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Ve
                     };
                 parsed_attachment_link.set_query(None);
                 let parsed_attachement_link_string = parsed_attachment_link.to_string();
-
+                
+                /*
+                    If an image is in the context then use the vision model instead of the text model
+                    The vison model has a lower call rate per day
+                */
                 if image_extentions.iter().any(|suffix| parsed_attachement_link_string.ends_with(suffix)) {
                     message_vec_content.push(ChatCompletionRequestMessageContentPartImageArgs::default().image_url(attachment_link).build().unwrap().into());
 
@@ -101,6 +105,9 @@ pub async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Ve
                         using_vision = true;
                     }
                 }
+                /*
+                    This adds the content of any attached text files to the message
+                */
                 else if text_extentions.iter().any(|suffix| parsed_attachement_link_string.ends_with(suffix)) {
                     let text_response = match reqwest::get(attachment_link).await
                     {
@@ -162,6 +169,10 @@ pub async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Ve
                     parsed_attachment_link.set_query(None);
                     let parsed_attachement_link_string = parsed_attachment_link.to_string();
     
+                    /*
+                        If an image is in the context then use the vision model instead of the text model
+                        The vison model has a lower call rate per day
+                    */
                     if image_extentions.iter().any(|suffix| parsed_attachement_link_string.ends_with(suffix)) {
                         message_vec_content.push(ChatCompletionRequestMessageContentPartImageArgs::default().image_url(attachment_link).build().unwrap().into());
     
@@ -170,6 +181,9 @@ pub async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Ve
                             using_vision = true;
                         }
                     }
+                    /*
+                        This adds the content of any attached text files to the message
+                    */
                     else if text_extentions.iter().any(|suffix| parsed_attachement_link_string.ends_with(suffix)) {
                         let text_response = match reqwest::get(attachment_link).await
                         {
@@ -257,7 +271,11 @@ pub async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Ve
             None => return_error(msg.clone(), "Unable to process stop typing".to_owned()).await.unwrap(),
         };
     let mut return_vec: Vec<String> = Vec::new();
-
+    
+    /*
+        If the response is longer than a discord message will allow, split the message
+        This splits the message into slightly shorter chunks than 2000 to allow for adding what part of the message it is and DEBUG: for debug mode
+    */
     if response_text.len() > 2000 {
         let chars: Vec<char> = response_text.chars().collect();
         let total_chunks = (response_text.len()/1980) + 1;

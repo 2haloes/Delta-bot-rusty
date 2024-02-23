@@ -46,6 +46,10 @@ struct ImageGenRequest {
     webhook: String
 }
 
+/*
+    This generates images using DALL-E
+    It uses the openai-async library for making calls
+*/
 pub async fn generate_dalle (prompt_text: String, msg: Message) -> Vec<CreateAttachment> {
     let client = Client::new();
     let request = match CreateImageRequestArgs::default()
@@ -68,7 +72,10 @@ pub async fn generate_dalle (prompt_text: String, msg: Message) -> Vec<CreateAtt
         };
     let mut image_attachments: Vec<CreateAttachment> = Vec::default();
 
-
+    /*
+        This loop goes through every image in the reply and converts it from base64 to bytes
+        This is then set as an attachment for a Discord message
+    */
     for (index, image_data) in response.data.iter().enumerate() {
         let mut image_data_base_64 = "".to_owned();
 
@@ -92,6 +99,12 @@ pub async fn generate_dalle (prompt_text: String, msg: Message) -> Vec<CreateAtt
     return image_attachments;
 }
 
+/*
+    This generates images using Runpod serverless
+    This uses reqwest to call the API
+    Note that currently, the serverless implimentation must return a base64 string
+    This should work with any Stable Diffusion/Stable Diffusion XL endpoint that is based on the offical API
+*/
 pub async fn generate_runpod_image (prompt_text: String, model_ref: String, msg: Message) -> Vec<CreateAttachment> {
     let runpod_auth_key = match env::var("RUNPOD_API_KEY")
         {
@@ -130,7 +143,11 @@ pub async fn generate_runpod_image (prompt_text: String, model_ref: String, msg:
         };
 
     let mut status_response_json: OutputResponseObject;
-
+    
+    /*
+        This calls the job status endpoint every 2 seconds
+        When the status changes from IN_QUEUE and IN_PROGRESS, the result is then used to get the image information
+    */
     loop {
         let status_response = match client.post(format!("https://api.runpod.ai/v2/{}/status/{}", model_ref, run_response_json.id))
             .headers(headers.clone())
@@ -164,6 +181,10 @@ pub async fn generate_runpod_image (prompt_text: String, model_ref: String, msg:
         None => return_error(msg.clone(), "No generated image data found".to_owned()).await.unwrap(),
     };
 
+    /*
+        This loop goes through every image in the reply and converts it from base64 to bytes
+        This is then set as an attachment for a Discord message
+    */
     for (index, base64_image) in image_output.images.iter().enumerate() {
         let base64_image_cleaned = base64_image.replace("data:image/png;base64,", "");
         match BASE64_STANDARD.decode(&base64_image_cleaned) {

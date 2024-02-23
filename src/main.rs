@@ -11,7 +11,7 @@ use serenity::{
 };
 
 use tokio::task;
-use tasks::{handle_errors::{return_error, UnwrapOrReturnError}, image_generation::{generate_dalle, generate_runpod_image}, text_generation::text_reply};
+use tasks::{handle_errors::return_error, image_generation::{generate_dalle, generate_runpod_image}, text_generation::text_reply};
 
 #[derive(serde::Deserialize)]
 struct FunctionData {
@@ -58,7 +58,11 @@ impl EventHandler for Handler {
                         let typing = Typing::start(ctx.clone().http, msg.channel_id.into());
                         let msg_safe = msg.borrow().content_safe(ctx.clone().cache);
                         let mut full_command = msg_safe.splitn(2, " ");
-                        let command_string = full_command.next().UnwrapOrReturnError(msg.clone(), "Unable to process command string".to_string());
+                        let command_string = match full_command.next()
+                            {
+                                Some(t) => t,
+                                None => return_error(msg.clone(), "Unable to process command string".to_owned()).await.unwrap(),
+                            };
                         let command_data = match full_command.next()
                             {
                                 Some(t) => t,
@@ -87,6 +91,10 @@ impl EventHandler for Handler {
                         let image_attachments: Vec<CreateAttachment>;
                         let full_command_string: String = format!("{command_data_prefix}{command_data}{command_data_suffix}");
 
+                        /*
+                            Ths chooses which functionality needs to be used based on the command provided
+                            Currently this supports generating images from DALL-E or a Runpod serverless instance
+                        */
                         match command_function_str {
                             "openai_dalle"=>{
                                 image_attachments = generate_dalle(full_command_string, msg.clone()).await;
@@ -101,6 +109,13 @@ impl EventHandler for Handler {
                             }
                         }
 
+                        /*
+                            Construct a message using the Message builder
+                            Refrences the orginal message sent to reply to it
+                            Creates an allowed mention for the orginal poster 
+                            Attaches the attachments generated in the above function call
+                            And adds a bit of text
+                        */
                         let message_builder = CreateMessage::new()
                             .reference_message(&msg)
                             .allowed_mentions(CreateAllowedMentions::new().users(vec![msg.clone().author.id]))
