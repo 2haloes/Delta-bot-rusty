@@ -1,6 +1,9 @@
 use std::env;
 
+use poise::serenity_prelude as serenity;
 use serenity::all::{Http, Message};
+
+use crate::{Data, Error};
 
 /*
     This function handles errors from Results<> and Nones from Option<>
@@ -15,4 +18,21 @@ pub async fn return_error<T> (msg: Message, error_msg : String) -> Option<T> {
     .expect("Error showing an error - ERROR HANDLER");
 
     panic!("{}", format!("An error has occured: {}", error_msg))
+}
+
+pub async fn on_error(error: poise::FrameworkError<'_, Data, Error>) {
+    // This is our custom error handler
+    // They are many errors that can occur, so we only handle the ones we want to customize
+    // and forward the rest to the default handler
+    match error {
+        poise::FrameworkError::Setup { error, .. } => panic!("Failed to start bot: {:?}", error),
+        poise::FrameworkError::Command { error, ctx, .. } => {
+            println!("Error in command `{}`: {:?}", ctx.command().name, error,);
+        }
+        error => {
+            if let Err(e) = poise::builtins::on_error(error).await {
+                println!("Error while handling error: {}", e)
+            }
+        }
+    }
 }

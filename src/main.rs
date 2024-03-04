@@ -4,20 +4,27 @@ mod tasks {
     pub(crate) mod image_generation;
 }
 
-use std::{borrow::Borrow, env};
+use std::{borrow::Borrow, env, sync::Arc, time::Duration};
+
+use poise::serenity_prelude as serenity;
 
 use serenity::{
     async_trait, builder::{CreateAllowedMentions, CreateAttachment, CreateMessage}, http::Typing, model::{channel::Message, gateway::Ready}, prelude::*
 };
 
 use tokio::task;
-use tasks::{handle_errors::return_error, image_generation::{generate_dalle, generate_runpod_image}, text_generation::text_reply};
+use tasks::{handle_errors::{on_error, return_error}, image_generation::{generate_dalle, generate_runpod_image}, text_generation::text_reply};
+
+struct Data {} // User data, which is stored and accessible in all command invocations
+type Error = Box<dyn std::error::Error + Send + Sync>;
+type Context<'a> = poise::Context<'a, Data, Error>;
 
 #[derive(serde::Deserialize)]
 struct FunctionData {
     function_command: String,
     function_type: String,
     function_api_key: String,
+    function_friendly_name: String,
     prompt_prefix: String,
     prompt_suffix: String
 }
@@ -37,7 +44,7 @@ struct Handler;
 */
 #[async_trait]
 impl EventHandler for Handler {
-    async fn message(&self, ctx: Context, msg: Message) {
+    async fn message(&self, ctx: serenity::prelude::Context, msg: Message) {
         task::spawn(async move {
             let author_id: String = env::var("USER_ID").unwrap_or("-1".to_owned());
             let debug_enabled: String = env::var("DEBUG").unwrap_or("0".to_owned());
@@ -152,7 +159,7 @@ impl EventHandler for Handler {
         });
     }
 
-    async fn ready(&self, _: Context, ready: Ready) {
+    async fn ready(&self, _: serenity::prelude::Context, ready: Ready) {
             println!("{} is connected!", ready.user.name);
     }
 }
@@ -165,9 +172,69 @@ async fn main() {
     | GatewayIntents::DIRECT_MESSAGES
     | GatewayIntents::MESSAGE_CONTENT;
 
-    let mut client = serenity::Client::builder(&token, intents).event_handler(Handler).await.expect("Err creating client");
+    let framework_options = poise::FrameworkOptions { 
+        commands: vec![],
+        prefix_options: poise::PrefixFrameworkOptions {
+            prefix: Some("!".into()),
+            edit_tracker: Some(Arc::new(poise::EditTracker::for_timespan(
+                Duration::from_secs(3600),
+            ))),
+            additional_prefixes: vec![
+                poise::Prefix::Literal("delta"),
+                poise::Prefix::Literal("Delta"),
+            ],
+            ..Default::default()
+        },
+        // The global error handler for all error cases that may occur
+        on_error: |error| Box::pin(on_error(error)),
+        // This code is run before every command
+        pre_command: |ctx| {
+            Box::pin(async move {
+                println!("Executing command {}...", ctx.command().qualified_name);
+            })
+        },
+        // This code is run after a command if it was successful (returned Ok)
+        post_command: |ctx| {
+            Box::pin(async move {
+                println!("Executed command {}!", ctx.command().qualified_name);
+            })
+        },
+        // Every command invocation must pass this check to continue execution
+        command_check: Some(|ctx| {
+            Box::pin(async move {
+                if ctx.author().id == 123456789 {
+                    return Ok(false);
+                }
+                Ok(true)
+            })
+        }),
+        // Enforce command checks even for owners (enforced by default)
+        // Set to true to bypass checks, which is useful for testing
+        skip_checks_for_owners: false,
+        event_handler: |_ctx, event, _framework, _data| {
+            Box::pin(async move {
+                println!(
+                    "Got an event in event handler: {:?}",
+                    event.snake_case_name()
+                );
+                Ok(())
+            })
+        },
+        ..Default::default()
+    };
 
-    if let Err(why) = client.start().await {
-        println!("Client error: {:?}", why);
-    }
+    let framework = poise::Framework::builder()
+        .options(framework_options)
+        .setup(|ctx, _ready, framework| {
+            Box::pin(async move {
+                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+                Ok(Data {})
+            })
+        })
+        .build();
+
+    let client = serenity::ClientBuilder::new(token, intents)
+        .framework(framework)
+        .await;
+    client.unwrap().start().await.unwrap();
 }

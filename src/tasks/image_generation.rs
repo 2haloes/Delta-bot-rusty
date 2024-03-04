@@ -1,10 +1,14 @@
-use std::{env, time::Duration};
+use std::{env, time::Duration, u32};
 
+use poise::serenity_prelude as serenity;
 use async_openai::{types::{CreateImageRequestArgs, Image, ImageModel, ImageSize, ResponseFormat}, Client};
 use base64::prelude::*;
 use reqwest::{header::HeaderValue, Response};
+use ::serenity::all::CreateSelectMenuOption;
 use serenity::all::{CreateAttachment, Message};
 use tokio::time::sleep;
+
+use crate::{Error, FunctionData, JsonObject};
 
 use super::handle_errors::return_error;
 
@@ -45,6 +49,104 @@ struct ImageGenRequest {
     input: ImageGenRunInput,
     webhook: String
 }
+
+// #[derive(Debug, poise::Modal)]
+// #[name = "Runpod Generation"]
+// struct ServerlessModal {
+//     #[name = "Prompt"]
+//     prompt: String,
+//     #[name = "Width Ratio (Default: 1)"]
+//     width_ratio: Option<String>,
+//     #[name = "Height Ratio (Default: 1)"]
+//     height_ratio: Option<String>,
+//     #[name = "Number of generations (Default: 1)"]
+//     num_gen: Option<String>
+// }
+
+// #[derive(Debug, poise::Modal)]
+// #[name = "DALL-E Generation"]
+// struct DalleModal {
+//     #[name = "Prompt"]
+//     prompt: String,
+//     #[name = "Number of generations (Default: 1)"]
+//     num_gen: Option<String>
+// }
+
+// #[poise::command(prefix_command, slash_command)]
+// pub async fn imagegen(ctx: crate::Context<'_>) -> Result<(), Error> {
+
+//     let bug_message = Message::default();
+
+//     // let function_json_string = match tokio::fs::read_to_string("assets/functions.json").await
+//     //     {
+//     //         Ok(t) => t,
+//     //         Err(e) => return_error(bug_message.clone(), e.to_string()).await.unwrap(),
+//     //     };
+//     // let function_object: JsonObject = match serde_json::from_str(&function_json_string)
+//     //     {
+//     //         Ok(t) => t,
+//     //         Err(e) => return_error(bug_message.clone(), e.to_string()).await.unwrap(),
+//     //     };
+//     // let current_function: FunctionData = match function_object.function_data.into_iter()
+//     //     .filter(|function| function.function_command == command_string).next()
+//     //     {
+//     //         Some(t) => t,
+//     //         None => return_error(bug_message.clone(), "Unable to process current function string".to_owned()).await.unwrap(),
+//     //     };
+
+//     // let model_options: Vec<CreateSelectMenuOption> = function_object.function_data.into_iter().map(|command_index: u32, command_object: FunctionData| 
+//     //     CreateSelectMenuOption::new(command_object.function_friendly_name, command_index)
+//     // ) ;
+
+//     // let mut model_options: Vec<CreateSelectMenuOption> = Vec::new();
+//     // let mut current_index: usize = 0;
+    
+//     // for (command_object) in function_object.function_data.into_iter() {
+//     //     model_options.push(CreateSelectMenuOption::new(command_object.function_friendly_name, current_index.to_string()));
+//     //     current_index += 1;
+//     // };
+
+//     let model_options: Vec<CreateSelectMenuOption> = vec![
+//         CreateSelectMenuOption::new("Explosion", "0".to_string()),
+//         CreateSelectMenuOption::new("Knife", "1".to_string())
+//     ];
+//     let reply = {
+//         let components: Vec<serenity::CreateActionRow> = vec![poise::serenity_prelude::CreateActionRow::SelectMenu(serenity::CreateSelectMenu::new("model_select",
+//             serenity::builder::CreateSelectMenuKind::String { options: model_options }
+//     ))];
+
+//         poise::CreateReply::default()
+//             .content("Please select which model to use")
+//             .components(components)
+//     };
+
+//     let sent_message = ctx.send(reply).await?;
+
+//     while let Some(mci) = serenity::ComponentInteractionCollector::new(ctx.serenity_context())
+//         .timeout(std::time::Duration::from_secs(120))
+//         .filter(move |mci| mci.data.custom_id == "model_select")
+//         .await
+//     {
+//         let _test = mci.clone();
+//         let full_message = sent_message.clone().into_message().await?;
+//         let _message_deleted = full_message.delete(ctx).await?;
+//         let data =
+//             poise::execute_modal_on_component_interaction::<ServerlessModal>(ctx, mci.clone(), None, None).await?;
+//         let data_unwrapped = data.unwrap();
+//         let width_ratio: f32 = data_unwrapped.width_ratio.unwrap_or("1".to_string()).parse().unwrap();
+//         let height_ratio: f32 = data_unwrapped.height_ratio.unwrap_or("1".to_string()).parse().unwrap();
+//         // This is a fixed value from 1024*1024 (this being the default SDXL height and width)
+//         let total_pixel_count: f32 = 1048576.0;
+//         // Calculate the image size based on the aspect ratio and total number of pixels the model allows
+//         // For example, Stable Diffusion XL supports 1024x1024 so the total pixesl would be the result of 1024*1024!
+//         let height = ((total_pixel_count * (height_ratio / width_ratio)).sqrt()).round();
+//         let width = ((width_ratio / height_ratio) * height).round();
+    
+    
+//         ctx.say(format!("Hello, the width is {} and the height is {}! Thank you for asking <@{}>", width, height, mci.user.id)).await?;
+//     }
+//     Ok(())
+// }
 
 /*
     This generates images using DALL-E
