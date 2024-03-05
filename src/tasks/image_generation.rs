@@ -1,16 +1,16 @@
-use std::{env, time::Duration, u32};
+use std::{env, fs, mem, sync::Arc, time::Duration, u32};
 
 use poise::serenity_prelude as serenity;
 use async_openai::{types::{CreateImageRequestArgs, Image, ImageModel, ImageSize, ResponseFormat}, Client};
 use base64::prelude::*;
 use reqwest::{header::HeaderValue, Response};
-use ::serenity::all::CreateSelectMenuOption;
+use ::serenity::all::{CacheHttp, ComponentInteractionDataKind, CreateAllowedMentions, CreateEmbed, CreateMessage, CreateSelectMenuOption, Typing};
 use serenity::all::{CreateAttachment, Message};
 use tokio::time::sleep;
 
-use crate::{Error, FunctionData, JsonObject};
+use crate::{tasks::handle_errors::return_error, Error, FunctionData, JsonObject};
 
-use super::handle_errors::return_error;
+use super::handle_errors::return_error_reply;
 
 #[derive(serde::Deserialize)]
 struct RunResponseObject {
@@ -50,110 +50,183 @@ struct ImageGenRequest {
     webhook: String
 }
 
-// #[derive(Debug, poise::Modal)]
-// #[name = "Runpod Generation"]
-// struct ServerlessModal {
-//     #[name = "Prompt"]
-//     prompt: String,
-//     #[name = "Width Ratio (Default: 1)"]
-//     width_ratio: Option<String>,
-//     #[name = "Height Ratio (Default: 1)"]
-//     height_ratio: Option<String>,
-//     #[name = "Number of generations (Default: 1)"]
-//     num_gen: Option<String>
-// }
+#[derive(Debug, poise::Modal)]
+#[name = "Runpod Generation"]
+struct ServerlessModal {
+    #[name = "Prompt"]
+    prompt: String,
+    #[name = "Negative Prompt (Default: null)"]
+    neg_prompt: Option<String>,
+    #[name = "Width Ratio (Default: 1)"]
+    width_ratio: Option<String>,
+    #[name = "Height Ratio (Default: 1)"]
+    height_ratio: Option<String>,
+    // #[name = "Guidance scale (Default: 7.5)"]
+    // guide_scale: Option<String>,
+    #[name = "Number of generations (Default: 1)"]
+    num_gen: Option<String>
+}
 
-// #[derive(Debug, poise::Modal)]
-// #[name = "DALL-E Generation"]
-// struct DalleModal {
-//     #[name = "Prompt"]
-//     prompt: String,
-//     #[name = "Number of generations (Default: 1)"]
-//     num_gen: Option<String>
-// }
+#[derive(Debug, poise::Modal)]
+#[name = "DALL-E Generation"]
+struct DalleModal {
+    #[name = "Prompt"]
+    prompt: String,
+    #[name = "Number of generations (Default: 1)"]
+    num_gen: Option<String>
+}
 
-// #[poise::command(prefix_command, slash_command)]
-// pub async fn imagegen(ctx: crate::Context<'_>) -> Result<(), Error> {
+#[poise::command(prefix_command, slash_command)]
+pub async fn imagegen(ctx: crate::Context<'_>) -> Result<(), Error> {
 
-//     let bug_message = Message::default();
+    //let bug_message = Message::default();
+    let requester_id = ctx.author().id;
+    let channel_id = ctx.channel_id();
 
-//     // let function_json_string = match tokio::fs::read_to_string("assets/functions.json").await
-//     //     {
-//     //         Ok(t) => t,
-//     //         Err(e) => return_error(bug_message.clone(), e.to_string()).await.unwrap(),
-//     //     };
-//     // let function_object: JsonObject = match serde_json::from_str(&function_json_string)
-//     //     {
-//     //         Ok(t) => t,
-//     //         Err(e) => return_error(bug_message.clone(), e.to_string()).await.unwrap(),
-//     //     };
-//     // let current_function: FunctionData = match function_object.function_data.into_iter()
-//     //     .filter(|function| function.function_command == command_string).next()
-//     //     {
-//     //         Some(t) => t,
-//     //         None => return_error(bug_message.clone(), "Unable to process current function string".to_owned()).await.unwrap(),
-//     //     };
+    let function_json_string = match fs::read_to_string("assets/functions.json")
+        {
+            Ok(t) => t,
+            Err(e) => return_error(requester_id.clone(), channel_id.clone(), e.to_string()).await.unwrap(),
+        };
+    let function_object: JsonObject = match serde_json::from_str(&function_json_string)
+        {
+            Ok(t) => t,
+            Err(e) => return_error(requester_id.clone(), channel_id.clone(), e.to_string()).await.unwrap(),
+        };
+    let function_data = function_object.function_data;
 
-//     // let model_options: Vec<CreateSelectMenuOption> = function_object.function_data.into_iter().map(|command_index: u32, command_object: FunctionData| 
-//     //     CreateSelectMenuOption::new(command_object.function_friendly_name, command_index)
-//     // ) ;
-
-//     // let mut model_options: Vec<CreateSelectMenuOption> = Vec::new();
-//     // let mut current_index: usize = 0;
+    let mut model_options: Vec<CreateSelectMenuOption> = Vec::new();
     
-//     // for (command_object) in function_object.function_data.into_iter() {
-//     //     model_options.push(CreateSelectMenuOption::new(command_object.function_friendly_name, current_index.to_string()));
-//     //     current_index += 1;
-//     // };
+    for (command_object) in function_data.clone().into_iter() {
+        model_options.push(CreateSelectMenuOption::new(command_object.function_friendly_name, command_object.function_command));
+    };
 
-//     let model_options: Vec<CreateSelectMenuOption> = vec![
-//         CreateSelectMenuOption::new("Explosion", "0".to_string()),
-//         CreateSelectMenuOption::new("Knife", "1".to_string())
-//     ];
-//     let reply = {
-//         let components: Vec<serenity::CreateActionRow> = vec![poise::serenity_prelude::CreateActionRow::SelectMenu(serenity::CreateSelectMenu::new("model_select",
-//             serenity::builder::CreateSelectMenuKind::String { options: model_options }
-//     ))];
+    let reply = {
+        let components: Vec<serenity::CreateActionRow> = vec![poise::serenity_prelude::CreateActionRow::SelectMenu(serenity::CreateSelectMenu::new("model_select",
+            serenity::builder::CreateSelectMenuKind::String { options: model_options }
+    ))];
 
-//         poise::CreateReply::default()
-//             .content("Please select which model to use")
-//             .components(components)
-//     };
+        poise::CreateReply::default()
+            .content("Please select which model to use")
+            .components(components)
+    };
 
-//     let sent_message = ctx.send(reply).await?;
+    let sent_message = ctx.send(reply).await?;
 
-//     while let Some(mci) = serenity::ComponentInteractionCollector::new(ctx.serenity_context())
-//         .timeout(std::time::Duration::from_secs(120))
-//         .filter(move |mci| mci.data.custom_id == "model_select")
-//         .await
-//     {
-//         let _test = mci.clone();
-//         let full_message = sent_message.clone().into_message().await?;
-//         let _message_deleted = full_message.delete(ctx).await?;
-//         let data =
-//             poise::execute_modal_on_component_interaction::<ServerlessModal>(ctx, mci.clone(), None, None).await?;
-//         let data_unwrapped = data.unwrap();
-//         let width_ratio: f32 = data_unwrapped.width_ratio.unwrap_or("1".to_string()).parse().unwrap();
-//         let height_ratio: f32 = data_unwrapped.height_ratio.unwrap_or("1".to_string()).parse().unwrap();
-//         // This is a fixed value from 1024*1024 (this being the default SDXL height and width)
-//         let total_pixel_count: f32 = 1048576.0;
-//         // Calculate the image size based on the aspect ratio and total number of pixels the model allows
-//         // For example, Stable Diffusion XL supports 1024x1024 so the total pixesl would be the result of 1024*1024!
-//         let height = ((total_pixel_count * (height_ratio / width_ratio)).sqrt()).round();
-//         let width = ((width_ratio / height_ratio) * height).round();
+    while let Some(mci) = serenity::ComponentInteractionCollector::new(ctx.serenity_context())
+        .timeout(std::time::Duration::from_secs(120))
+        .filter(move |mci| mci.data.custom_id == "model_select")
+        .await
+    {
+        // Cannot get ctx to be used with typing, requires Arc<Http> when the ctx only returns &Http
+        let typing_cache = serenity::Http::new(&env::var("DISCORD_TOKEN").expect("Expected a token in the environment"));
+        let typing_cache_arc: Arc<serenity::Http> = Arc::new(typing_cache);
+        let typing: Typing;
+        let data_kind = mci.clone().data.kind;
+        let current_command = match data_kind {
+            ComponentInteractionDataKind::StringSelect { values } => {values[0].clone()},
+            _ => return_error(requester_id.clone(), channel_id.clone(), "An invalid response has been returned from the dropdown".to_owned()).await.unwrap()
+        };
     
-    
-//         ctx.say(format!("Hello, the width is {} and the height is {}! Thank you for asking <@{}>", width, height, mci.user.id)).await?;
-//     }
-//     Ok(())
-// }
+        let current_function: FunctionData = match function_data.clone().into_iter()
+            .filter(|function| function.function_command == current_command).next()
+            {
+                Some(t) => t,
+                None => return_error(requester_id.clone(), channel_id.clone(), "Unable to process current function string".to_owned()).await.unwrap(),
+            };
+        let command_function_type = current_function.function_type.as_str();
+        let command_api_str = current_function.function_api_key;
+        let command_data_prefix = current_function.prompt_prefix;
+        let command_data_suffix = current_function.prompt_suffix;
+        let image_attachments: Vec<CreateAttachment>;
+        //let full_command_string: String = format!("{command_data_prefix}{prompt}{command_data_suffix}");
+        let full_message = sent_message.clone().into_message().await?;
+        let _message_deleted = full_message.delete(ctx).await?;
+        let image_attachments: Vec<CreateAttachment>;
+        let mut embed_set: Vec<CreateEmbed> = Vec::new();
+        let mut prompt: String;
+
+        match command_function_type {
+            "runpod_image" => {
+                typing = Typing::start(typing_cache_arc, channel_id.into());
+                let data =
+                    poise::execute_modal_on_component_interaction::<ServerlessModal>(ctx, mci.clone(), None, None).await?;
+                let data_unwrapped = data.unwrap();
+                let width_ratio: f32 = match data_unwrapped.width_ratio.unwrap_or("1".to_string()).parse()
+                {
+                    Ok(t) => t,
+                    Err(_) => return_error(requester_id.clone(), channel_id.clone(), "Non number entered into width ratio field".to_owned()).await.unwrap(),
+                };
+                let height_ratio: f32 = match data_unwrapped.height_ratio.unwrap_or("1".to_string()).parse()
+                {
+                    Ok(t) => t,
+                    Err(_) => return_error(requester_id.clone(), channel_id.clone(), "Non number entered into height ratio field".to_owned()).await.unwrap(),
+                };
+                prompt = data_unwrapped.prompt;
+                let number_of_generations: u32 = match data_unwrapped.num_gen.unwrap_or("1".to_string()).parse()
+                {
+                    Ok(t) => t,
+                    Err(_) => return_error(requester_id.clone(), channel_id.clone(), "Non number entered into number of generations field".to_owned()).await.unwrap(),
+                };
+                let neg_prompt: String = data_unwrapped.neg_prompt.unwrap_or("".to_string());
+                // let guide_scale: f32 = match data_unwrapped.guide_scale.unwrap_or("7.5".to_string()).parse()
+                // {
+                //     Ok(t) => t,
+                //     Err(_) => return_error(requester_id.clone(), channel_id.clone(), "Non number entered into height ratio field".to_owned()).await.unwrap(),
+                // };
+                // This is a fixed value from 1024*1024 (this being the default SDXL height and width)
+                let total_pixel_count: f32 = 1048576.0;
+                // Calculate the image size based on the aspect ratio and total number of pixels the model allows
+                // For example, Stable Diffusion XL supports 1024x1024 so the total pixesl would be the result of 1024*1024!
+                let height: f32 = ((((total_pixel_count * (height_ratio / width_ratio)).sqrt()).round()as u32) + 7 & !7) as f32;
+                let width: f32 = ((((width_ratio / height_ratio) * height).round() as u32) + 7 & !7) as f32;
+                let full_prompt = format!("{}{}{}", command_data_prefix, prompt, command_data_suffix);
+                
+                image_attachments = generate_runpod_image(full_prompt, command_api_str, width, height, number_of_generations, neg_prompt, 7.5, ctx).await;
+            },
+            _ => {panic!("Oh noes!");}
+        }
+
+        embed_set.push(
+            CreateEmbed::new()
+                .attachment(image_attachments[0].clone().filename)
+                .title("Generation success")
+                .url("https://runpod.io")
+                .description(format!("Congratulations <@{}>, your image has been generated with the following prompt\n> {}", requester_id, prompt))
+        );
+
+        for (image_attach) in image_attachments.clone().into_iter().skip(1) {
+            embed_set.push(
+                CreateEmbed::new()
+                    .url("https://runpod.io")
+                    .attachment(image_attach.filename)
+            );
+        };
+
+        let message_builder = CreateMessage::new()
+            .allowed_mentions(CreateAllowedMentions::new().users(vec![requester_id]))
+            .files(image_attachments)
+            .add_embeds(embed_set);
+        
+        match channel_id.send_message(ctx, message_builder).await
+            {
+                Ok(t) => t,
+                Err(e) => return_error(requester_id.clone(), channel_id.clone(), e.to_string()).await.unwrap(),
+            };
+        typing.stop();
+        
+    }
+    Ok(())
+}
 
 /*
     This generates images using DALL-E
     It uses the openai-async library for making calls
 */
-pub async fn generate_dalle (prompt_text: String, msg: Message) -> Vec<CreateAttachment> {
+pub async fn generate_dalle (prompt_text: String, ctx: crate::Context<'_>) -> Vec<CreateAttachment> {
     let client = Client::new();
+    let requester_id = ctx.author().id;
+    let channel_id = ctx.channel_id();
     let request = match CreateImageRequestArgs::default()
         .prompt(prompt_text)
         .n(1)
@@ -164,13 +237,13 @@ pub async fn generate_dalle (prompt_text: String, msg: Message) -> Vec<CreateAtt
         .build()
         {
             Ok(t) => t,
-            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+            Err(e) => return_error(requester_id.clone(), channel_id.clone(), e.to_string()).await.unwrap(),
         };
 
     let response = match client.images().create(request).await
         {
             Ok(t) => t,
-            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+            Err(e) => return_error(requester_id.clone(), channel_id.clone(), e.to_string()).await.unwrap(),
         };
     let mut image_attachments: Vec<CreateAttachment> = Vec::default();
 
@@ -186,7 +259,7 @@ pub async fn generate_dalle (prompt_text: String, msg: Message) -> Vec<CreateAtt
                 image_data_base_64 = b64_json.as_str().to_owned();
             },
             Image::Url {..} => {
-                return_error(msg.clone(), "Expected Base64 from DALL-E, got a different output instead".to_owned()).await.unwrap()
+                return_error(requester_id.clone(), channel_id.clone(), "Expected Base64 from DALL-E, got a different output instead".to_owned()).await.unwrap()
             }
         }
         let base64_image_cleaned = image_data_base_64.replace("data:image/png;base64,", "");
@@ -207,11 +280,22 @@ pub async fn generate_dalle (prompt_text: String, msg: Message) -> Vec<CreateAtt
     Note that currently, the serverless implimentation must return a base64 string
     This should work with any Stable Diffusion/Stable Diffusion XL endpoint that is based on the offical API
 */
-pub async fn generate_runpod_image (prompt_text: String, model_ref: String, msg: Message) -> Vec<CreateAttachment> {
+pub async fn generate_runpod_image (
+    prompt_text: String, 
+    model_ref: String, 
+    width: f32, 
+    height: f32, 
+    num_gen: u32,
+    neg_prompt: String,
+    guide_scale: f32,
+    ctx: crate::Context<'_>
+) -> Vec<CreateAttachment> {
+    let requester_id = ctx.author().id;
+    let channel_id = ctx.channel_id();
     let runpod_auth_key = match env::var("RUNPOD_API_KEY")
         {
             Ok(t) => t,
-            Err(_) => return_error(msg.clone(), "No runpod API key found".to_owned()).await.unwrap(),
+            Err(_) => return_error(requester_id.clone(), channel_id.clone(), "No runpod API key found".to_owned()).await.unwrap(),
         };
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert("accept", HeaderValue::from_static("application/json"));
@@ -223,17 +307,20 @@ pub async fn generate_runpod_image (prompt_text: String, model_ref: String, msg:
         .body(format!("{{
             \"input\": {{
                 \"prompt\": \"{}\",
-                \"height\": 1024,
-                \"width\": 1024,
+                \"negative_prompt\": \"{}\",
+                \"height\": {},
+                \"width\": {},
                 \"scheduler\": \"K_EULER\",
-                \"num_inference_steps\": 40
+                \"num_inference_steps\": 40,
+                \"guidance_scale\": {},
+                \"num_images\": {}
             }}
-        }}", prompt_text))
+        }}", prompt_text, neg_prompt, height, width, guide_scale, num_gen))
         .send()
         .await
         {
             Ok(t) => t,
-            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+            Err(e) => return_error(requester_id.clone(), channel_id.clone(), e.to_string()).await.unwrap(),
         };
        
 
@@ -241,7 +328,7 @@ pub async fn generate_runpod_image (prompt_text: String, model_ref: String, msg:
         .await
         {
             Ok(t) => t,
-            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+            Err(e) => return_error(requester_id.clone(), channel_id.clone(), e.to_string()).await.unwrap(),
         };
 
     let mut status_response_json: OutputResponseObject;
@@ -257,7 +344,7 @@ pub async fn generate_runpod_image (prompt_text: String, model_ref: String, msg:
             .await
             {
                 Ok(t) => t,
-                Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                Err(e) => return_error(requester_id.clone(), channel_id.clone(), e.to_string()).await.unwrap(),
             };
         
 
@@ -265,7 +352,7 @@ pub async fn generate_runpod_image (prompt_text: String, model_ref: String, msg:
             .await
             {
                 Ok(t) => t,
-                Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                Err(e) => return_error(requester_id.clone(), channel_id.clone(), e.to_string()).await.unwrap(),
             };
 
         if !(status_response_json.status.clone().unwrap() == "IN_QUEUE" || status_response_json.status.clone().unwrap() == "IN_PROGRESS") {
@@ -280,7 +367,7 @@ pub async fn generate_runpod_image (prompt_text: String, model_ref: String, msg:
     let image_output = match status_response_json.output
     {
         Some(t) => t,
-        None => return_error(msg.clone(), "No generated image data found".to_owned()).await.unwrap(),
+        None => return_error(requester_id.clone(), channel_id.clone(), "No generated image data found".to_owned()).await.unwrap(),
     };
 
     /*

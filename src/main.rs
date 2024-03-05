@@ -13,13 +13,14 @@ use serenity::{
 };
 
 use tokio::task;
-use tasks::{handle_errors::{on_error, return_error}, image_generation::{generate_dalle, generate_runpod_image}, text_generation::text_reply};
+use tasks::{handle_errors::{on_error, return_error_reply}, image_generation::{generate_dalle, generate_runpod_image, imagegen}, text_generation::text_reply};
 
 struct Data {} // User data, which is stored and accessible in all command invocations
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
 
 #[derive(serde::Deserialize)]
+#[derive(Clone)]
 struct FunctionData {
     function_command: String,
     function_type: String,
@@ -68,28 +69,28 @@ impl EventHandler for Handler {
                         let command_string = match full_command.next()
                             {
                                 Some(t) => t,
-                                None => return_error(msg.clone(), "Unable to process command string".to_owned()).await.unwrap(),
+                                None => return_error_reply(msg.clone(), "Unable to process command string".to_owned()).await.unwrap(),
                             };
                         let command_data = match full_command.next()
                             {
                                 Some(t) => t,
-                                None => return_error(msg.clone(), "Unable to process command data string".to_owned()).await.unwrap(),
+                                None => return_error_reply(msg.clone(), "Unable to process command data string".to_owned()).await.unwrap(),
                             };
                         let function_json_string = match tokio::fs::read_to_string("assets/functions.json").await
                             {
                                 Ok(t) => t,
-                                Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                                Err(e) => return_error_reply(msg.clone(), e.to_string()).await.unwrap(),
                             };
                         let function_object: JsonObject = match serde_json::from_str(&function_json_string)
                             {
                                 Ok(t) => t,
-                                Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                                Err(e) => return_error_reply(msg.clone(), e.to_string()).await.unwrap(),
                             };
                         let current_function: FunctionData = match function_object.function_data.into_iter()
                             .filter(|function| function.function_command == command_string).next()
                             {
                                 Some(t) => t,
-                                None => return_error(msg.clone(), "Unable to process current function string".to_owned()).await.unwrap(),
+                                None => return_error_reply(msg.clone(), "Unable to process current function string".to_owned()).await.unwrap(),
                             };
                         let command_function_str = current_function.function_type.as_str();
                         let command_api_str = current_function.function_api_key;
@@ -103,12 +104,12 @@ impl EventHandler for Handler {
                             Currently this supports generating images from DALL-E or a Runpod serverless instance
                         */
                         match command_function_str {
-                            "openai_dalle"=>{
-                                image_attachments = generate_dalle(full_command_string, msg.clone()).await;
-                            }
-                            "runpod_image"=>{
-                                image_attachments = generate_runpod_image(full_command_string, command_api_str, msg.clone()).await;
-                            }
+                            // "openai_dalle"=>{
+                            //     image_attachments = generate_dalle(full_command_string, msg.clone()).await;
+                            // }
+                            // "runpod_image"=>{
+                            //     image_attachments = generate_runpod_image(full_command_string, command_api_str, msg.clone()).await;
+                            // }
                             _=>{
                                 // If a reply can't be made... is there a point in trying to reply with a different error?
                                 msg.reply(ctx.http, format!("{}Your command has not been recognised, sorry I couldn't help!", message_prefix)).await.expect("Unable to send default command reply");
@@ -132,7 +133,7 @@ impl EventHandler for Handler {
                         match msg.channel_id.send_message(ctx.http, message_builder).await
                             {
                                 Ok(t) => t,
-                                Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                                Err(e) => return_error_reply(msg.clone(), e.to_string()).await.unwrap(),
                             };
                         typing.stop();
                     } else if msg.mentions_user_id(ctx.cache.current_user().id) {
@@ -148,7 +149,7 @@ impl EventHandler for Handler {
                             match msg.channel_id.send_message(http_cache.clone(), message_builder).await
                             {
                                 Ok(t) => t,
-                                Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                                Err(e) => return_error_reply(msg.clone(), e.to_string()).await.unwrap(),
                             };
                         }
                         typing.stop();
@@ -173,13 +174,14 @@ async fn main() {
     | GatewayIntents::MESSAGE_CONTENT;
 
     let framework_options = poise::FrameworkOptions { 
-        commands: vec![],
+        commands: vec![imagegen()],
         prefix_options: poise::PrefixFrameworkOptions {
-            prefix: Some("!".into()),
+            prefix: Some("!delta".into()),
             edit_tracker: Some(Arc::new(poise::EditTracker::for_timespan(
                 Duration::from_secs(3600),
             ))),
             additional_prefixes: vec![
+                poise::Prefix::Literal("!Delta"),
                 poise::Prefix::Literal("delta"),
                 poise::Prefix::Literal("Delta"),
             ],
