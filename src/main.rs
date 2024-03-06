@@ -2,6 +2,7 @@ mod tasks {
     pub(crate) mod text_generation;
     pub(crate) mod handle_errors;
     pub(crate) mod image_generation;
+    pub(crate) mod misc_commands;
 }
 
 use std::{env, sync::Arc, time::Duration};
@@ -13,7 +14,7 @@ use serenity::{
 };
 
 use tokio::task;
-use tasks::{handle_errors::{on_error, return_error_reply}, image_generation::imagegen, text_generation::text_reply};
+use tasks::{handle_errors::return_error_reply, image_generation::imagegen, misc_commands::help, text_generation::text_reply};
 
 struct Data {} // User data, which is stored and accessible in all command invocations
 type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -100,7 +101,10 @@ async fn main() {
     | GatewayIntents::MESSAGE_CONTENT;
 
     let framework_options = poise::FrameworkOptions { 
-        commands: vec![imagegen()],
+        commands: vec![
+            imagegen(),
+            help()
+        ],
         prefix_options: poise::PrefixFrameworkOptions {
             prefix: Some("!delta".into()),
             edit_tracker: Some(Arc::new(poise::EditTracker::for_timespan(
@@ -113,8 +117,6 @@ async fn main() {
             ],
             ..Default::default()
         },
-        // The global error handler for all error cases that may occur
-        on_error: |error| Box::pin(on_error(error)),
         // This code is run before every command
         pre_command: |ctx| {
             Box::pin(async move {
@@ -125,27 +127,6 @@ async fn main() {
         post_command: |ctx| {
             Box::pin(async move {
                 println!("Executed command {}!", ctx.command().qualified_name);
-            })
-        },
-        // Every command invocation must pass this check to continue execution
-        command_check: Some(|ctx| {
-            Box::pin(async move {
-                if ctx.author().id == 123456789 {
-                    return Ok(false);
-                }
-                Ok(true)
-            })
-        }),
-        // Enforce command checks even for owners (enforced by default)
-        // Set to true to bypass checks, which is useful for testing
-        skip_checks_for_owners: false,
-        event_handler: |_ctx, event, _framework, _data| {
-            Box::pin(async move {
-                println!(
-                    "Got an event in event handler: {:?}",
-                    event.snake_case_name()
-                );
-                Ok(())
             })
         },
         ..Default::default()

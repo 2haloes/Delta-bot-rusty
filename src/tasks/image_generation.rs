@@ -62,20 +62,13 @@ struct ServerlessModal {
     height_ratio: Option<String>,
     #[name = "Guidance scale (Default: 7.5)"]
     guide_scale: Option<String>,
-    // NOTE: On runpod in base64 output, generating more than 2 images will make the response too big and trigger an exception
-    // #[name = "Number of generations (Default: 1)"]
-    // num_gen: Option<String>
 }
 
 #[derive(Debug, poise::Modal)]
 #[name = "DALL-E Generation"]
 struct DalleModal {
     #[name = "Prompt"]
-    prompt: String,
-    // This has been removed to keep consistency with the ServerlessModal, doesn't work with DALL-E 3 anyway
-    //#[name = "Number of generations (Default: 1)"]
-    //num_gen: Option<String>
-}
+    prompt: String,}
 
 #[poise::command(prefix_command, slash_command)]
 pub async fn imagegen(ctx: crate::Context<'_>) -> Result<(), Error> {
@@ -162,13 +155,6 @@ pub async fn imagegen(ctx: crate::Context<'_>) -> Result<(), Error> {
                     Err(_) => return_error(requester_id.clone(), channel_id.clone(), "Non number entered into height ratio field".to_owned()).await.unwrap(),
                 };
                 prompt = data_unwrapped.prompt;
-                // Generating 3 or more images will trigger an error on Runpod in b64 mode so with the restriction of 5 objects
-                // per modal, guidance scale has been kept in this case
-                // let number_of_generations: u32 = match data_unwrapped.num_gen.unwrap_or("1".to_string()).parse()
-                // {
-                //     Ok(t) => t,
-                //     Err(_) => return_error(requester_id.clone(), channel_id.clone(), "Non number entered into number of generations field".to_owned()).await.unwrap(),
-                // };
                 let neg_prompt: String = data_unwrapped.neg_prompt.unwrap_or("".to_string());
                 let guide_scale: f32 = match data_unwrapped.guide_scale.unwrap_or("7.5".to_string()).parse()
                 {
@@ -178,7 +164,7 @@ pub async fn imagegen(ctx: crate::Context<'_>) -> Result<(), Error> {
                 // This is a fixed value from 1024*1024 (this being the default SDXL height and width)
                 let total_pixel_count: f32 = 1048576.0;
                 // Calculate the image size based on the aspect ratio and total number of pixels the model allows
-                // For example, Stable Diffusion XL supports 1024x1024 so the total pixesl would be the result of 1024*1024!
+                // For example, Stable Diffusion XL supports 1024x1024 so the total pixesl would be the result of 1024*1024
                 let height: f32 = ((((total_pixel_count * (height_ratio / width_ratio)).sqrt()).round()as u32) + 7 & !7) as f32;
                 let width: f32 = ((((width_ratio / height_ratio) * height).round() as u32) + 7 & !7) as f32;
                 let full_prompt = format!("{}{}{}", command_data_prefix, prompt, command_data_suffix);
@@ -231,15 +217,7 @@ pub async fn imagegen(ctx: crate::Context<'_>) -> Result<(), Error> {
             }
             _ => {panic!("Oh noes!");}
         }
-
-        // embed_set.push(
-        //     CreateEmbed::new()
-        //         .attachment(image_attachments[0].clone().filename)
-        //         //.title("Generation success")
-        //         .url("https://runpod.io")
-        //         .description(format!("Congratulations <@{}>, your image has been generated with the following input\n\n> Model: {}\n> Prompt: {}\n> Neg prompt: {}\n> {}\n> {}\n> {}", requester_id, prompt))
-        // );
-
+        
         for image_attach in image_attachments.clone().into_iter().skip(1) {
             embed_set.push(
                 CreateEmbed::new()
