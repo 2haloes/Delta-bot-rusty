@@ -30,9 +30,8 @@ The current state of Delta bot rusty is still in a pre-release state with comple
   - Lets the end user know if an exception has occured with a basic description of the exception
   - This includes when content has been blocked by OpenAI filters
 - Customisable functionality
-  - The `assets/functions.json` file allows implimenting different commands. Currently it's only used for image generation
-  - Allows setting bot commands, the only restriction currently is that they need to start with `!delta`
-  - Commands can be linked to different endpoints or the same endpoint with modified prompts
+  - The `assets/functions.json` file allows implimenting different models. Currently it's only used for image generation
+  - Image models can be linked to different endpoints or the same endpoint with modified prompts
     - This can be used with my [modified SDXL endpoint](https://github.com/2haloes/worker-sdxl-pony-v8) as the model used in the repo supports 4 different output styles
 
 ## Roadmap
@@ -46,8 +45,9 @@ The current state of Delta bot rusty is still in a pre-release state with comple
   - [x] This new way will be entirely in memory, nothing is saved to disk
 - [ ] Public release of Runpod serverless templates
   - Will allow anyone to quickly setup Runpod services using the same models that I have been using
-- [ ] Proper function integration
+- [x] Proper function integration
   - This is a big unknown for me but I'm looking at it, basically when you type ! in discord, it should then show Delta's commands
+    - I got it close enough using slash commands, I had no idea what was going to happen and didn't know what was possible
 - [ ] Voice support (both ways)
   - [ ] For tts, this would use OpenAI's built in TTS support (if it works in the libraries I'm using of course), you'd probably start a message with something like !delta-tts and then Delta will reply with both text and a audio file
     - [ ] Will need to convert to a video, Discord sucks horribly for audio formats
@@ -103,6 +103,7 @@ It has the following JSON layout
             "function_command": "!delta-dalle",
             "function_type": "openai_dalle",
             "function_api_key": "",
+            "function_friendly_name": "DALL-E 3",
             "prompt_prefix": "",
             "prompt_suffix": ""
         },
@@ -110,6 +111,7 @@ It has the following JSON layout
             "function_command": "!delta-imagegen",
             "function_type": "runpod_image",
             "function_api_key": "sd-openjourney",
+            "function_friendly_name": "OpenJourney SD 1.5"
             "prompt_prefix": "",
             "prompt_suffix": ""
         }
