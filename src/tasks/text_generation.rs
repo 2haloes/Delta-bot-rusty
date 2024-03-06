@@ -4,7 +4,7 @@ use async_openai::{types::{ChatCompletionRequestAssistantMessageArgs, ChatComple
 use reqwest::Url;
 use serenity::all::{CacheHttp, Http, Message};
 
-use super::handle_errors::return_error;
+use super::handle_errors::return_error_reply;
 
 pub async fn generate_chat_messages (current_role: Role, content: Vec<ChatCompletionRequestMessageContentPart>, content_string_only: String, msg: Message) -> ChatCompletionRequestMessage {
     if current_role == Role::Assistant {
@@ -13,7 +13,7 @@ pub async fn generate_chat_messages (current_role: Role, content: Vec<ChatComple
         .build()
         {
             Ok(t) => async_openai::types::ChatCompletionRequestMessage::Assistant(t),
-            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+            Err(e) => return_error_reply(msg.clone(), e.to_string()).await.unwrap(),
         }
     } else if current_role == Role::Function {
         return match ChatCompletionRequestFunctionMessageArgs::default()
@@ -21,7 +21,7 @@ pub async fn generate_chat_messages (current_role: Role, content: Vec<ChatComple
         .build()
         {
             Ok(t) => async_openai::types::ChatCompletionRequestMessage::Function(t),
-            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+            Err(e) => return_error_reply(msg.clone(), e.to_string()).await.unwrap(),
         }
     } else if current_role == Role::System {
         return match ChatCompletionRequestSystemMessageArgs::default()
@@ -29,7 +29,7 @@ pub async fn generate_chat_messages (current_role: Role, content: Vec<ChatComple
         .build()
         {
             Ok(t) => async_openai::types::ChatCompletionRequestMessage::System(t),
-            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+            Err(e) => return_error_reply(msg.clone(), e.to_string()).await.unwrap(),
         }
     } else if current_role == Role::Tool {
         return match ChatCompletionRequestToolMessageArgs::default()
@@ -37,7 +37,7 @@ pub async fn generate_chat_messages (current_role: Role, content: Vec<ChatComple
         .build()
         {
             Ok(t) => async_openai::types::ChatCompletionRequestMessage::Tool(t),
-            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+            Err(e) => return_error_reply(msg.clone(), e.to_string()).await.unwrap(),
         }
     } else {
         return match ChatCompletionRequestUserMessageArgs::default()
@@ -45,7 +45,7 @@ pub async fn generate_chat_messages (current_role: Role, content: Vec<ChatComple
         .build()
         {
             Ok(t) => async_openai::types::ChatCompletionRequestMessage::User(t),
-            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+            Err(e) => return_error_reply(msg.clone(), e.to_string()).await.unwrap(),
         }
     }
 }
@@ -88,7 +88,7 @@ pub async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Ve
                 let mut parsed_attachment_link = match Url::parse(&attachment_link)
                     {
                         Ok(t) => t,
-                        Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                        Err(e) => return_error_reply(msg.clone(), e.to_string()).await.unwrap(),
                     };
                 parsed_attachment_link.set_query(None);
                 let parsed_attachement_link_string = parsed_attachment_link.to_string();
@@ -112,18 +112,18 @@ pub async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Ve
                     let text_response = match reqwest::get(attachment_link).await
                     {
                         Ok(t) => t,
-                        Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                        Err(e) => return_error_reply(msg.clone(), e.to_string()).await.unwrap(),
                     };
                     let text_content = match text_response.text().await
                     {
                         Ok(t) => t,
-                        Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                        Err(e) => return_error_reply(msg.clone(), e.to_string()).await.unwrap(),
                     };
                     let mut attachment_path_split = parsed_attachement_link_string.rsplit("/");
                     let attachment_name = match attachment_path_split.next()
                     {
                         Some(t) => t,
-                        None => return_error(msg.clone(), "Unable to process stop typing".to_owned()).await.unwrap(),
+                        None => return_error_reply(msg.clone(), "Unable to process stop typing".to_owned()).await.unwrap(),
                     };
 
                     message_vec_content.push(ChatCompletionRequestMessageContentPartTextArgs::default().text(format!("Content of the file: {attachment_name} ```{text_content}```")).build().unwrap().into());
@@ -164,7 +164,7 @@ pub async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Ve
                     let mut parsed_attachment_link = match Url::parse(&attachment_link)
                         {
                             Ok(t) => t,
-                            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                            Err(e) => return_error_reply(msg.clone(), e.to_string()).await.unwrap(),
                         };
                     parsed_attachment_link.set_query(None);
                     let parsed_attachement_link_string = parsed_attachment_link.to_string();
@@ -188,18 +188,18 @@ pub async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Ve
                         let text_response = match reqwest::get(attachment_link).await
                         {
                             Ok(t) => t,
-                            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                            Err(e) => return_error_reply(msg.clone(), e.to_string()).await.unwrap(),
                         };
                         let text_content = match text_response.text().await
                         {
                             Ok(t) => t,
-                            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+                            Err(e) => return_error_reply(msg.clone(), e.to_string()).await.unwrap(),
                         };
                         let mut attachment_path_split = parsed_attachement_link_string.rsplit("/");
                         let attachment_name = match attachment_path_split.next()
                         {
                             Some(t) => t,
-                            None => return_error(msg.clone(), "Unable to process stop typing".to_owned()).await.unwrap(),
+                            None => return_error_reply(msg.clone(), "Unable to process stop typing".to_owned()).await.unwrap(),
                         };
     
                         message_vec_content.push(ChatCompletionRequestMessageContentPartTextArgs::default().text(format!("Content of the file: {attachment_name} ```{text_content}```")).build().unwrap().into());
@@ -256,19 +256,19 @@ pub async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Ve
         .build()
         {
             Ok(t) => t,
-            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+            Err(e) => return_error_reply(msg.clone(), e.to_string()).await.unwrap(),
         };
 
     let response_choices = match client.chat().create(chatgpt_request).await
         {
             Ok(t) => t,
-            Err(e) => return_error(msg.clone(), e.to_string()).await.unwrap(),
+            Err(e) => return_error_reply(msg.clone(), e.to_string()).await.unwrap(),
         };
     let response = &response_choices.choices[0].message.content;
     let response_text = match response.as_ref()
         {
             Some(t) => t,
-            None => return_error(msg.clone(), "Unable to process stop typing".to_owned()).await.unwrap(),
+            None => return_error_reply(msg.clone(), "Unable to process stop typing".to_owned()).await.unwrap(),
         };
     let mut return_vec: Vec<String> = Vec::new();
     
