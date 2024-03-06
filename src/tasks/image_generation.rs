@@ -1,16 +1,15 @@
-use std::{env, fs, mem, sync::Arc, time::Duration, u32};
+use std::{env, fs, sync::Arc, time::Duration, u32};
 
 use poise::serenity_prelude as serenity;
-use async_openai::{types::{CreateImageRequestArgs, Image, ImageModel, ImageSize, ResponseFormat}, Client};
+use async_openai::{types::{CreateImageRequestArgs, Image, ImageModel, ImageQuality, ImageSize, ImageStyle, ResponseFormat}, Client};
 use base64::prelude::*;
 use reqwest::{header::HeaderValue, Response};
-use ::serenity::all::{CacheHttp, ComponentInteractionDataKind, CreateAllowedMentions, CreateEmbed, CreateMessage, CreateSelectMenuOption, Typing};
-use serenity::all::{CreateAttachment, Message};
+use ::serenity::all::{ComponentInteractionDataKind, CreateAllowedMentions, CreateEmbed, CreateMessage, CreateSelectMenuOption, Typing};
+use serenity::all::CreateAttachment;
 use tokio::time::sleep;
 
 use crate::{tasks::handle_errors::return_error, Error, FunctionData, JsonObject};
 
-use super::handle_errors::return_error_reply;
 
 #[derive(serde::Deserialize)]
 struct RunResponseObject {
@@ -61,10 +60,11 @@ struct ServerlessModal {
     width_ratio: Option<String>,
     #[name = "Height Ratio (Default: 1)"]
     height_ratio: Option<String>,
-    // #[name = "Guidance scale (Default: 7.5)"]
-    // guide_scale: Option<String>,
-    #[name = "Number of generations (Default: 1)"]
-    num_gen: Option<String>
+    #[name = "Guidance scale (Default: 7.5)"]
+    guide_scale: Option<String>,
+    // NOTE: On runpod in base64 output, generating more than 2 images will make the response too big and trigger an exception
+    // #[name = "Number of generations (Default: 1)"]
+    // num_gen: Option<String>
 }
 
 #[derive(Debug, poise::Modal)]
@@ -72,8 +72,9 @@ struct ServerlessModal {
 struct DalleModal {
     #[name = "Prompt"]
     prompt: String,
-    #[name = "Number of generations (Default: 1)"]
-    num_gen: Option<String>
+    // This has been removed to keep consistency with the ServerlessModal, doesn't work with DALL-E 3 anyway
+    //#[name = "Number of generations (Default: 1)"]
+    //num_gen: Option<String>
 }
 
 #[poise::command(prefix_command, slash_command)]
@@ -97,7 +98,7 @@ pub async fn imagegen(ctx: crate::Context<'_>) -> Result<(), Error> {
 
     let mut model_options: Vec<CreateSelectMenuOption> = Vec::new();
     
-    for (command_object) in function_data.clone().into_iter() {
+    for command_object in function_data.clone().into_iter() {
         model_options.push(CreateSelectMenuOption::new(command_object.function_friendly_name, command_object.function_command));
     };
 
@@ -138,13 +139,11 @@ pub async fn imagegen(ctx: crate::Context<'_>) -> Result<(), Error> {
         let command_api_str = current_function.function_api_key;
         let command_data_prefix = current_function.prompt_prefix;
         let command_data_suffix = current_function.prompt_suffix;
-        let image_attachments: Vec<CreateAttachment>;
-        //let full_command_string: String = format!("{command_data_prefix}{prompt}{command_data_suffix}");
         let full_message = sent_message.clone().into_message().await?;
         let _message_deleted = full_message.delete(ctx).await?;
         let image_attachments: Vec<CreateAttachment>;
         let mut embed_set: Vec<CreateEmbed> = Vec::new();
-        let mut prompt: String;
+        let prompt: String;
 
         match command_function_type {
             "runpod_image" => {
@@ -163,17 +162,19 @@ pub async fn imagegen(ctx: crate::Context<'_>) -> Result<(), Error> {
                     Err(_) => return_error(requester_id.clone(), channel_id.clone(), "Non number entered into height ratio field".to_owned()).await.unwrap(),
                 };
                 prompt = data_unwrapped.prompt;
-                let number_of_generations: u32 = match data_unwrapped.num_gen.unwrap_or("1".to_string()).parse()
-                {
-                    Ok(t) => t,
-                    Err(_) => return_error(requester_id.clone(), channel_id.clone(), "Non number entered into number of generations field".to_owned()).await.unwrap(),
-                };
-                let neg_prompt: String = data_unwrapped.neg_prompt.unwrap_or("".to_string());
-                // let guide_scale: f32 = match data_unwrapped.guide_scale.unwrap_or("7.5".to_string()).parse()
+                // Generating 3 or more images will trigger an error on Runpod in b64 mode so with the restriction of 5 objects
+                // per modal, guidance scale has been kept in this case
+                // let number_of_generations: u32 = match data_unwrapped.num_gen.unwrap_or("1".to_string()).parse()
                 // {
                 //     Ok(t) => t,
-                //     Err(_) => return_error(requester_id.clone(), channel_id.clone(), "Non number entered into height ratio field".to_owned()).await.unwrap(),
+                //     Err(_) => return_error(requester_id.clone(), channel_id.clone(), "Non number entered into number of generations field".to_owned()).await.unwrap(),
                 // };
+                let neg_prompt: String = data_unwrapped.neg_prompt.unwrap_or("".to_string());
+                let guide_scale: f32 = match data_unwrapped.guide_scale.unwrap_or("7.5".to_string()).parse()
+                {
+                    Ok(t) => t,
+                    Err(_) => return_error(requester_id.clone(), channel_id.clone(), "Non number entered into height ratio field".to_owned()).await.unwrap(),
+                };
                 // This is a fixed value from 1024*1024 (this being the default SDXL height and width)
                 let total_pixel_count: f32 = 1048576.0;
                 // Calculate the image size based on the aspect ratio and total number of pixels the model allows
@@ -182,20 +183,64 @@ pub async fn imagegen(ctx: crate::Context<'_>) -> Result<(), Error> {
                 let width: f32 = ((((width_ratio / height_ratio) * height).round() as u32) + 7 & !7) as f32;
                 let full_prompt = format!("{}{}{}", command_data_prefix, prompt, command_data_suffix);
                 
-                image_attachments = generate_runpod_image(full_prompt, command_api_str, width, height, number_of_generations, neg_prompt, 7.5, ctx).await;
+                image_attachments = generate_runpod_image(full_prompt, command_api_str, width, height, 2, neg_prompt.clone(), guide_scale, ctx).await;
+
+                // First image is pushed with the embed, this is because the content of the embed is dependent on the model selected
+                embed_set.push(
+                    CreateEmbed::new()
+                        .attachment(image_attachments[0].clone().filename)
+                        .url("https://runpod.io")
+                        .description(
+                            format!(
+                                "Congratulations <@{}>, your image has been generated with the following input\n\n> Model: {}\n> Prompt: {}\n> Neg prompt: {}\n> Width ratio: {} (Actual width: {})\n> Height ratio: {} (Actual height: {})\n> Guidance scale: {}", 
+                                requester_id,
+                                current_command,
+                                prompt,
+                                neg_prompt,
+                                width_ratio,
+                                width,
+                                height_ratio,
+                                height,
+                                guide_scale
+                            )
+                        )
+                );
             },
+            "openai_dalle" => {
+                typing = Typing::start(typing_cache_arc, channel_id.into());
+                let data =
+                    poise::execute_modal_on_component_interaction::<DalleModal>(ctx, mci.clone(), None, None).await?;
+                let data_unwrapped = data.unwrap();
+                let prompt = data_unwrapped.prompt;
+                // No option for multiple generations at one time with DALL-E 3
+                image_attachments = generate_dalle(prompt.clone(), ctx).await;
+
+                embed_set.push(
+                    CreateEmbed::new()
+                        .attachment(image_attachments[0].clone().filename)
+                        .url("https://runpod.io")
+                        .description(
+                            format!(
+                                "Congratulations <@{}>, your image has been generated with the following input\n\n> Model: {}\n> Prompt: {}", 
+                                requester_id,
+                                current_command,
+                                prompt
+                            )
+                        )
+                );
+            }
             _ => {panic!("Oh noes!");}
         }
 
-        embed_set.push(
-            CreateEmbed::new()
-                .attachment(image_attachments[0].clone().filename)
-                .title("Generation success")
-                .url("https://runpod.io")
-                .description(format!("Congratulations <@{}>, your image has been generated with the following prompt\n> {}", requester_id, prompt))
-        );
+        // embed_set.push(
+        //     CreateEmbed::new()
+        //         .attachment(image_attachments[0].clone().filename)
+        //         //.title("Generation success")
+        //         .url("https://runpod.io")
+        //         .description(format!("Congratulations <@{}>, your image has been generated with the following input\n\n> Model: {}\n> Prompt: {}\n> Neg prompt: {}\n> {}\n> {}\n> {}", requester_id, prompt))
+        // );
 
-        for (image_attach) in image_attachments.clone().into_iter().skip(1) {
+        for image_attach in image_attachments.clone().into_iter().skip(1) {
             embed_set.push(
                 CreateEmbed::new()
                     .url("https://runpod.io")
@@ -205,6 +250,7 @@ pub async fn imagegen(ctx: crate::Context<'_>) -> Result<(), Error> {
 
         let message_builder = CreateMessage::new()
             .allowed_mentions(CreateAllowedMentions::new().users(vec![requester_id]))
+            .content(format!("<@{}>", requester_id))
             .files(image_attachments)
             .add_embeds(embed_set);
         
@@ -223,7 +269,7 @@ pub async fn imagegen(ctx: crate::Context<'_>) -> Result<(), Error> {
     This generates images using DALL-E
     It uses the openai-async library for making calls
 */
-pub async fn generate_dalle (prompt_text: String, ctx: crate::Context<'_>) -> Vec<CreateAttachment> {
+async fn generate_dalle (prompt_text: String, ctx: crate::Context<'_>) -> Vec<CreateAttachment> {
     let client = Client::new();
     let requester_id = ctx.author().id;
     let channel_id = ctx.channel_id();
@@ -234,6 +280,8 @@ pub async fn generate_dalle (prompt_text: String, ctx: crate::Context<'_>) -> Ve
         .size(ImageSize::S1024x1024)
         .user("Delta-Bot")
         .model(ImageModel::DallE3)
+        .quality(ImageQuality::HD)
+        .style(ImageStyle::Vivid)
         .build()
         {
             Ok(t) => t,
@@ -280,7 +328,7 @@ pub async fn generate_dalle (prompt_text: String, ctx: crate::Context<'_>) -> Ve
     Note that currently, the serverless implimentation must return a base64 string
     This should work with any Stable Diffusion/Stable Diffusion XL endpoint that is based on the offical API
 */
-pub async fn generate_runpod_image (
+async fn generate_runpod_image (
     prompt_text: String, 
     model_ref: String, 
     width: f32, 

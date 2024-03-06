@@ -1,7 +1,7 @@
 use std::env;
 
 use poise::serenity_prelude as serenity;
-use ::serenity::all::{Channel, ChannelId, UserId};
+use ::serenity::all::{ChannelId, UserId};
 use serenity::all::{Http, Message};
 
 use crate::{Data, Error};
@@ -31,7 +31,7 @@ pub async fn return_error<T> (user_id: UserId, message_channel_id: ChannelId, er
     // Not using the return_error function as it leads here and if there's an issue here, it'll just loop
     message_channel_id.say(current_http, format!("Apologies <@{}>, your request cannot be completed, the error is as follows:\n```{}```", user_id, error_msg))
     .await
-    .expect("Error showing an error - ERROR HANDLER");;
+    .expect("Error showing an error - ERROR HANDLER");
 
     panic!("{}", format!("An error has occured: {}", error_msg))
 }
