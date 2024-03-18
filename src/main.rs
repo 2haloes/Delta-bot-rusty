@@ -10,8 +10,9 @@ use std::{env, path::PathBuf, sync::Arc, time::Duration};
 
 use poise::serenity_prelude as serenity;
 
+use ::serenity::all::FullEvent;
 use serenity::{
-    async_trait, builder::{CreateAllowedMentions, CreateMessage}, http::Typing, model::{channel::Message, gateway::Ready}, prelude::*
+    builder::{CreateAllowedMentions, CreateMessage}, http::Typing, model::channel::Message, prelude::*
 };
 
 use tokio::task;
@@ -39,61 +40,6 @@ struct JsonObject{
     function_data: Vec<FunctionData>
 }
 
-struct Handler;
-
-/*
-    This EventHandler is used by serenity to process any events that happen
-    This program currently supports
-        - message - for when any messages are recieved wherever the bot has access to messages (includes DMs)
-        - ready - for when the bot has successfully connected to Discord
-*/
-#[async_trait]
-impl EventHandler for Handler {
-    async fn message(&self, ctx: serenity::prelude::Context, msg: Message) {
-        task::spawn(async move {
-            let author_id: String = env::var("USER_ID").unwrap_or("-1".to_owned());
-            let debug_enabled: String = env::var("DEBUG").unwrap_or("0".to_owned());
-
-            if debug_enabled != "1".to_owned() ||
-            author_id == msg.author.id.to_string() {
-                let message_prefix: String;
-                if debug_enabled == "1".to_owned() {
-                    message_prefix = "DEBUG: ".to_string();
-                } else {
-                    message_prefix = "".to_string();
-                }
-                /*
-                    This if statement splits between a text reply and using a function from functions.json
-                 */
-                if msg.author.id != ctx.cache.current_user().id {
-                    if msg.mentions_user_id(ctx.cache.current_user().id) {
-                        let http_cache = ctx.clone().http;
-                        let current_user_id: u64 = ctx.cache.current_user().id.into();
-                        let typing = Typing::start(http_cache.clone(), msg.channel_id.into());
-                        let response_vec = text_reply(msg.clone(), &ctx, current_user_id).await;
-                        for response in response_vec {
-                            let message_builder = CreateMessage::new()
-                                .reference_message(&msg)
-                                .allowed_mentions(CreateAllowedMentions::new().users(vec![msg.clone().author.id]))
-                                .content(format!("{}{}", message_prefix, response));
-                            match msg.channel_id.send_message(http_cache.clone(), message_builder).await
-                            {
-                                Ok(t) => t,
-                                Err(e) => return_error_reply(msg.clone(), e.to_string()).await.unwrap(),
-                            };
-                        }
-                        typing.stop();
-
-                    }
-                }
-            }
-        });
-    }
-
-    async fn ready(&self, _: serenity::prelude::Context, ready: Ready) {
-            println!("{} is connected!", ready.user.name);
-    }
-}
 #[tokio::main]
 async fn main() {
     let token = env::var("DISCORD_TOKEN")
@@ -141,6 +87,59 @@ async fn main() {
         post_command: |ctx| {
             Box::pin(async move {
                 println!("Executed command {}!", ctx.command().qualified_name);
+            })
+        },
+        /*
+            This EventHandler is used by serenity to process any events that happen
+            This program currently supports
+                - message - for when any messages are recieved wherever the bot has access to messages (includes DMs)
+        */
+        event_handler: |ctx, event, _framework, _data| {
+            Box::pin(async move {
+                match event {
+                    FullEvent::Message { new_message } => {
+                        let author_id: String = env::var("USER_ID").unwrap_or("-1".to_owned());
+                        let debug_enabled: String = env::var("DEBUG").unwrap_or("0".to_owned());
+
+                        if debug_enabled != "1".to_owned() ||
+                        author_id == new_message.author.id.to_string() {
+                            let message_prefix: String;
+                            if debug_enabled == "1".to_owned() {
+                                message_prefix = "DEBUG: ".to_string();
+                            } else {
+                                message_prefix = "".to_string();
+                            }
+                            if new_message.author.id != ctx.cache.current_user().id && new_message.mentions_user_id(ctx.cache.current_user().id) {
+                                let http_cache = ctx.clone().http;
+                                let current_user_id: u64 = ctx.cache.current_user().id.into();
+                                let typing = Typing::start(http_cache.clone(), new_message.channel_id.into());
+                                let response_vec = text_reply(new_message.clone(), &ctx, current_user_id).await;
+                                let mut last_sent_reply = Message::default();
+                                let _default_message = Message::default();
+                                for response in response_vec {
+                                    let mut response_message: &Message = new_message;
+                                    // The message ID is set to 1 if it is default, I am making an assumption that this bot will never get a new message with the ID of 1
+                                    // Even if this was the case, this will only affect multi message responses
+                                    if last_sent_reply.id != 1 {
+                                        response_message = &last_sent_reply;
+                                    }
+                                    let message_builder = CreateMessage::new()
+                                        .reference_message(response_message)
+                                        .allowed_mentions(CreateAllowedMentions::new().users(vec![new_message.clone().author.id]))
+                                        .content(format!("{}{}", message_prefix, response));
+                                    last_sent_reply = match new_message.channel_id.send_message(http_cache.clone(), message_builder).await
+                                    {
+                                        Ok(t) => t,
+                                        Err(e) => return_error_reply(new_message.clone(), e.to_string()).await.unwrap(),
+                                    };
+                                }
+                                typing.stop();
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                Ok(())
             })
         },
         ..Default::default()
