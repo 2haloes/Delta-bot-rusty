@@ -1,6 +1,6 @@
 use async_openai::{types::{CreateSpeechRequestArgs, SpeechModel, Voice}, Client};
 use poise::CreateReply;
-use serenity::all::{CreateAttachment, CreateMessage};
+use serenity::all::CreateAttachment;
 
 use crate::{tasks::handle_errors::return_error, Error};
 
@@ -16,11 +16,7 @@ pub async fn tts(ctx: crate::Context<'_>) -> Result<(), Error> {
 
     let response = client.audio().speech(request).await?;
 
-    //response.save("./data/audio.mp3").await?;
     let attachment: Vec<u8> = response.bytes.to_vec();
-
-    //let message_builder = CreateReply::new()
-    //        .add_file(CreateAttachment::bytes(attachment, "tts_output.ogg"));
 
     let message_builder = CreateReply 
     { 

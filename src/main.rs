@@ -4,6 +4,7 @@ mod tasks {
     pub(crate) mod image_generation;
     pub(crate) mod misc_commands;
     pub(crate) mod tts;
+    pub(crate) mod ffmpeg_handler;
 }
 
 use std::{env, path::PathBuf, sync::Arc, time::Duration};
@@ -15,7 +16,6 @@ use serenity::{
     builder::{CreateAllowedMentions, CreateMessage}, http::Typing, model::channel::Message, prelude::*
 };
 
-use tokio::task;
 use tasks::{handle_errors::return_error_reply, image_generation::imagegen, misc_commands::help, text_generation::text_reply, tts::tts};
 
 use which::which;
