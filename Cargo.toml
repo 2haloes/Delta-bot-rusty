@@ -17,6 +17,7 @@ rand = "0.8.5"
 base64 = "0.22.0"
 poise = "0.6.1"
 which = "6.0.0"
+shell-words = "1.1.0"
 
 [profile.release.package."*"]
 strip = true
