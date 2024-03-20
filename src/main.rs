@@ -16,7 +16,7 @@ use serenity::{
     builder::{CreateAllowedMentions, CreateMessage}, http::Typing, model::channel::Message, prelude::*
 };
 
-use tasks::{handle_errors::return_error_reply, image_generation::imagegen, misc_commands::help, text_generation::text_reply, tts::tts};
+use tasks::{handle_errors::return_error_reply, image_generation::imagegen, misc_commands::help, text_generation::text_reply, tts::{tts_from_message, tts_from_text}};
 
 use which::which;
 
@@ -59,7 +59,8 @@ async fn main() {
 
     // If FFmpeg is avaliable, add the commands that depend on it to the commands list
     if result_test != PathBuf::default() {
-        command_set.push(tts())
+        command_set.push(tts_from_text());
+        command_set.push(tts_from_message())
     }
 
 
