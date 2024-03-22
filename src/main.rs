@@ -3,9 +3,11 @@ mod tasks {
     pub(crate) mod handle_errors;
     pub(crate) mod image_generation;
     pub(crate) mod misc_commands;
+    pub(crate) mod tts;
+    pub(crate) mod ffmpeg_handler;
 }
 
-use std::{env, sync::Arc, time::Duration};
+use std::{env, path::PathBuf, sync::Arc, time::Duration};
 
 use poise::serenity_prelude as serenity;
 
@@ -14,7 +16,9 @@ use serenity::{
     builder::{CreateAllowedMentions, CreateMessage}, http::Typing, model::channel::Message, prelude::*
 };
 
-use tasks::{handle_errors::return_error_reply, image_generation::imagegen, misc_commands::help, text_generation::text_reply};
+use tasks::{handle_errors::return_error_reply, image_generation::imagegen, misc_commands::help, text_generation::text_reply, tts::{tts_from_message, tts_from_text}};
+
+use which::which;
 
 struct Data {} // User data, which is stored and accessible in all command invocations
 type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -45,11 +49,23 @@ async fn main() {
     | GatewayIntents::DIRECT_MESSAGES
     | GatewayIntents::MESSAGE_CONTENT;
 
+    let mut command_set = vec![
+        imagegen(),
+        help()
+    ];
+
+    // Check that FFmpeg is installed and avaliable, this is needed for media conversions
+    let result_test = which("ffmpeg").unwrap_or(PathBuf::default());
+
+    // If FFmpeg is avaliable, add the commands that depend on it to the commands list
+    if result_test != PathBuf::default() {
+        command_set.push(tts_from_text());
+        command_set.push(tts_from_message())
+    }
+
+
     let framework_options = poise::FrameworkOptions { 
-        commands: vec![
-            imagegen(),
-            help()
-        ],
+        commands: command_set,
         prefix_options: poise::PrefixFrameworkOptions {
             prefix: Some("!delta".into()),
             edit_tracker: Some(Arc::new(poise::EditTracker::for_timespan(

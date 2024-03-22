@@ -45,12 +45,16 @@ The current state of Delta bot rusty is still in a pre-release state with comple
   - [x] This new way will be entirely in memory, nothing is saved to disk
 - [ ] Public release of Runpod serverless templates
   - Will allow anyone to quickly setup Runpod services using the same models that I have been using
+  - Not currently possible but the docker containers to use on Runpod are avaliable
+    - [Juggernaut XL Container](https://hub.docker.com/repository/docker/2haloes/runpod-sdxl-juggernaut)
+    - [Pony Diffusion XL Container](https://hub.docker.com/repository/docker/2haloes/runpod-sdxl-pony)
+    - [Github repo these both are based on](https://github.com/2haloes/worker-sdxl-pony-v8)
 - [x] Proper function integration
   - This is a big unknown for me but I'm looking at it, basically when you type ! in discord, it should then show Delta's commands
     - I got it close enough using slash commands, I had no idea what was going to happen and didn't know what was possible
 - [ ] Voice support (both ways)
-  - [ ] For tts, this would use OpenAI's built in TTS support (if it works in the libraries I'm using of course), you'd probably start a message with something like !delta-tts and then Delta will reply with both text and a audio file
-    - [ ] Will need to convert to a video, Discord sucks horribly for audio formats
+  - [x] For tts, this would use OpenAI's built in TTS support (if it works in the libraries I'm using of course), you'd probably start a message with something like !delta-tts and then Delta will reply with both text and a audio file
+    - [x] Will need to convert to a video, Discord sucks horribly for audio formats
   - [ ] For voice recognition, this would use Whisper, it's just the best, only speech to text will work but I believe that's all that's currently around
     - [ ] Delta would skip it's own messages as it always provides a transcription of it's own message anyway
 - [ ] Possibly reimpliment OpenAI dependent functionality to allow use of Runpod Serverless

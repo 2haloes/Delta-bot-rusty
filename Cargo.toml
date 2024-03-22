@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 tokio = { version = "1.36.0", features = ["macros", "rt-multi-thread"] }
-serenity = { default-features = false, features = ["client", "gateway", "model", "rustls_backend", "cache"], version = "0.12.0"}
+serenity = { default-features = false, features = ["client", "gateway", "model", "rustls_backend", "cache"], version = "0.12.1"}
 async-openai = "0.19.0"
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0.114"
@@ -16,6 +16,8 @@ uuid = "1.7.0"
 rand = "0.8.5"
 base64 = "0.22.0"
 poise = "0.6.1"
+which = "6.0.0"
+shell-words = "1.1.0"
 
 [profile.release.package."*"]
 strip = true
