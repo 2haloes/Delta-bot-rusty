@@ -77,7 +77,18 @@ pub async fn imagegen(ctx: crate::Context<'_>) -> Result<(), Error> {
     let requester_id = ctx.author().id;
     let channel_id = ctx.channel_id();
 
-    let function_json_string = match fs::read_to_string("assets/functions.json")
+    let current_exe = match env::current_exe()
+        {
+            Ok(t) => t,
+            Err(e) => return_error(requester_id.clone(), channel_id.clone(), e.to_string()).await.unwrap(),
+        };
+    let current_path = match current_exe.parent() 
+        {
+            Some(t) => t,
+            None => return_error(requester_id.clone(), channel_id.clone(), "Unable to process current function string".to_owned()).await.unwrap(),
+        };
+    let assets_location = current_path.join("assets").join("functions.json");
+    let function_json_string = match fs::read_to_string(assets_location)
         {
             Ok(t) => t,
             Err(e) => return_error(requester_id.clone(), channel_id.clone(), e.to_string()).await.unwrap(),
@@ -102,10 +113,11 @@ pub async fn imagegen(ctx: crate::Context<'_>) -> Result<(), Error> {
 
         poise::CreateReply::default()
             .content("Please select which model to use")
+            .ephemeral(true)
             .components(components)
     };
 
-    let sent_message = ctx.send(reply).await?;
+    let _sent_message = ctx.send(reply).await?;
 
     while let Some(mci) = serenity::ComponentInteractionCollector::new(ctx.serenity_context())
         .timeout(std::time::Duration::from_secs(120))
@@ -132,8 +144,6 @@ pub async fn imagegen(ctx: crate::Context<'_>) -> Result<(), Error> {
         let command_api_str = current_function.function_api_key;
         let command_data_prefix = current_function.prompt_prefix;
         let command_data_suffix = current_function.prompt_suffix;
-        let full_message = sent_message.clone().into_message().await?;
-        let _message_deleted = full_message.delete(ctx).await?;
         let image_attachments: Vec<CreateAttachment>;
         let mut embed_set: Vec<CreateEmbed> = Vec::new();
         let prompt: String;

@@ -16,7 +16,7 @@ pub async fn tts_from_text(
     let _result = match timeout(Duration::from_secs(180), tts_run(ctx, text_to_tts)).await
         {
             Ok(t) => t,
-            Err(e) => return_error_command(ctx, "This TTS command has timed out, this may be due to the length of the text".to_owned()).await.unwrap(),
+            Err(_) => return_error_command(ctx, "This TTS command has timed out, this may be due to the length of the text".to_owned()).await.unwrap(),
         };
 
     Ok(())
@@ -32,7 +32,7 @@ pub async fn tts_from_message(
     let _result = match timeout(Duration::from_secs(180), tts_run(ctx, message_to_tts.content_safe(ctx))).await
         {
             Ok(t) => t,
-            Err(e) => return_error_command(ctx, "This TTS command has timed out, this may be due to the length of the text".to_owned()).await.unwrap(),
+            Err(_) => return_error_command(ctx, "This TTS command has timed out, this may be due to the length of the text".to_owned()).await.unwrap(),
         };
 
     Ok(())
