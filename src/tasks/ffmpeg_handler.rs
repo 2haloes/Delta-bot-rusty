@@ -21,7 +21,7 @@ pub async fn run_ffmpeg(file_input: Vec<u8>, command: String, user_id: UserId, m
     ffmpeg_full_args.push("/C".to_owned());
     ffmpeg_full_args.push(ffmpeg_location_as_str.to_string());
     ffmpeg_full_args.push("-y".to_owned());
-    if debug_enabled == "1" {
+    if debug_enabled != "1" {
         ffmpeg_full_args.push("-hide_banner".to_owned());
         ffmpeg_full_args.push("-loglevel".to_owned());
         ffmpeg_full_args.push("panic".to_owned());

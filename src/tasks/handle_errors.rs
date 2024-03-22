@@ -33,3 +33,17 @@ pub async fn return_error<T> (user_id: UserId, message_channel_id: ChannelId, er
 
     panic!("{}", format!("An error has occured: {}", error_msg))
 }
+
+/*
+    This function handles errors from Results<> and Nones from Option<>
+    Either using the error message or a custom string that is sent instead of the expected reply
+    This is for slash command responses
+*/
+pub async fn return_error_command<T> (ctx: crate::Context<'_>, error_msg : String) -> Option<T> {
+    // Not using the return_error function as it leads here and if there's an issue here, it'll just loop
+    ctx.reply(format!("Apologies, your request cannot be completed, the error is as follows:\n```{}```", error_msg))
+    .await
+    .expect("Error showing an error - ERROR HANDLER");
+
+    panic!("{}", format!("An error has occured: {}", error_msg))
+}
