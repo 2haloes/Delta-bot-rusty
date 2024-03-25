@@ -71,7 +71,7 @@ pub async fn tts_run (
 
     let attachment: Vec<u8> = response.bytes.to_vec();
 
-    let attachment_processed: Vec<u8>= run_ffmpeg(attachment, "-f matroska -filter_complex \"[0:a]showwaves=s=320x240:colors=White:mode=line'\" -c:a mp3".to_string(), requester_id, channel_id).await;
+    let attachment_processed: Vec<u8>= run_ffmpeg(Some(attachment), None, "-f matroska -filter_complex \"[0:a]showwaves=s=320x240:colors=White:mode=line'\" -c:a mp3".to_string(), requester_id, channel_id).await;
 
     if attachment_processed.is_empty() {
         let _: Error = return_error(requester_id, channel_id, "TTS output has returned empty".to_owned()).await.unwrap();

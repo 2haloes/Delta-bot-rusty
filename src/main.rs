@@ -4,6 +4,7 @@ mod tasks {
     pub(crate) mod image_generation;
     pub(crate) mod misc_commands;
     pub(crate) mod tts;
+    pub(crate) mod stt;
     pub(crate) mod ffmpeg_handler;
 }
 
@@ -16,7 +17,7 @@ use serenity::{
     builder::{CreateAllowedMentions, CreateMessage}, http::Typing, model::channel::Message, prelude::*
 };
 
-use tasks::{handle_errors::return_error_reply, image_generation::imagegen, misc_commands::help, text_generation::text_reply, tts::{tts_from_message, tts_from_text}};
+use tasks::{handle_errors::return_error_reply, image_generation::imagegen, misc_commands::help, stt::{transcribe_from_attachment, transcribe_from_message}, text_generation::text_reply, tts::{tts_from_message, tts_from_text}};
 
 use which::which;
 
@@ -60,7 +61,9 @@ async fn main() {
     // If FFmpeg is avaliable, add the commands that depend on it to the commands list
     if result_test != PathBuf::default() {
         command_set.push(tts_from_text());
-        command_set.push(tts_from_message())
+        command_set.push(tts_from_message());
+        command_set.push(transcribe_from_attachment());
+        command_set.push(transcribe_from_message());
     }
 
 
