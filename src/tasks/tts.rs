@@ -2,7 +2,7 @@ use async_openai::{types::{CreateSpeechRequestArgs, SpeechModel, Voice}, Client}
 use poise::CreateReply;
 use serenity::all::CreateAttachment;
 use tokio::time::timeout;
-use std::time::Duration;
+use std::{env, fs::{create_dir_all, remove_file}, time::Duration};
 
 use crate::{tasks::{ffmpeg_handler::run_ffmpeg, handle_errors::{return_error, return_error_command}}, Error};
 
@@ -47,6 +47,22 @@ pub async fn tts_run (
     let requester_id = ctx.author().id;
     let channel_id = ctx.channel_id();
 
+    let current_exe = match env::current_exe()
+        {
+            Ok(t) => t,
+            Err(e) => return_error(requester_id.clone(), channel_id.clone(), e.to_string()).await.unwrap(),
+        };
+    let current_path = match current_exe.parent() 
+        {
+            Some(t) => t,
+            None => return_error(requester_id.clone(), channel_id.clone(), "Unable to process current function string".to_owned()).await.unwrap(),
+        };
+    let tmp_location = current_path.join("tmp");
+
+    let _ = create_dir_all(tmp_location.clone());
+
+    let tmp_file = tmp_location.join(format!("{}_{}.mp3", requester_id, channel_id));
+
     match ctx.defer().await
     {
         Ok(t) => t,
@@ -69,10 +85,12 @@ pub async fn tts_run (
             Err(e) => return_error(requester_id, channel_id, e.to_string()).await.unwrap(),
         };
 
-    let attachment: Vec<u8> = response.bytes.to_vec();
+    // let attachment: Vec<u8> = response.bytes.to_vec();
+    let _ = response.save(tmp_file.clone()).await;
 
-    let attachment_processed: Vec<u8>= run_ffmpeg(Some(attachment), None, "-f matroska -filter_complex \"[0:a]showwaves=s=320x240:colors=White:mode=line'\" -c:a mp3".to_string(), requester_id, channel_id).await;
+    let attachment_processed: Vec<u8>= run_ffmpeg(None, Some(tmp_file.clone().into_os_string().into_string().unwrap()), "-f matroska -filter_complex \"[0:a]showwaves=s=320x240:colors=White:mode=line'\" -c:a mp3".to_string(), requester_id, channel_id).await;
 
+    let _ = remove_file(tmp_file);
     if attachment_processed.is_empty() {
         let _: Error = return_error(requester_id, channel_id, "TTS output has returned empty".to_owned()).await.unwrap();
     }
