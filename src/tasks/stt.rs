@@ -1,6 +1,5 @@
-use async_openai::{types::{AudioInput, AudioResponseFormat, CreateTranscriptionRequestArgs}, Client};
+use async_openai::{types::{AudioInput, CreateTranscriptionRequestArgs}, Client};
 use poise::CreateReply;
-use reqwest::Url;
 use serenity::all::Attachment;
 use tokio::time::timeout;
 use std::time::Duration;
@@ -14,7 +13,7 @@ pub async fn transcribe_from_attachment(
     attachment_to_stt: Attachment
 ) -> Result<(), Error> {
     // NOTE: This command has a timeout of 3 minutes, this is due to OpenAI sometimes taking an extremely long time to process longer text requests and at some point it does have to stop
-    let _result = match timeout(Duration::from_secs(180), stt_run(ctx, attachment_to_stt.url)).await
+    let _result = match timeout(Duration::from_secs(180), stt_run(ctx, attachment_to_stt.proxy_url)).await
         {
             Ok(t) => t,
             Err(_) => return_error_command(ctx, "This TTS command has timed out, this may be due to the length of the text".to_owned()).await.unwrap(),
@@ -33,7 +32,7 @@ pub async fn transcribe_from_message(
         return_error_command(ctx, "The linked message does not have any attachments".to_owned()).await.unwrap()
     }
     // NOTE: This command has a timeout of 3 minutes, this is due to OpenAI sometimes taking an extremely long time to process longer text requests and at some point it does have to stop
-    let _result = match timeout(Duration::from_secs(180), stt_run(ctx, message_to_stt.attachments[0].url.clone())).await
+    let _result = match timeout(Duration::from_secs(180), stt_run(ctx, message_to_stt.attachments[0].proxy_url.clone())).await
         {
             Ok(t) => t,
             Err(_) => return_error_command(ctx, "This TTS command has timed out, this may be due to the length of the text".to_owned()).await.unwrap(),
@@ -57,18 +56,6 @@ pub async fn stt_run (
         Err(e) => return_error(requester_id, channel_id, e.to_string()).await.unwrap(),
     };
 
-    // let video_request = match reqwest::get(stt_attachment_url.clone()).await
-    //     {
-    //         Ok(t) => t,
-    //         Err(e) => return_error(requester_id, channel_id, e.to_string()).await.unwrap(),
-    //     };
-
-    // let video_bytes = match video_request.bytes().await
-    //     {
-    //         Ok(t) => t,
-    //         Err(e) => return_error(requester_id, channel_id, e.to_string()).await.unwrap(),
-    //     };
-
     let attachment_processed: Vec<u8>= run_ffmpeg(None, Some(stt_attachment_url.clone()), "-f mp3".to_string(), requester_id, channel_id).await;
 
     if attachment_processed.is_empty() {
@@ -78,7 +65,6 @@ pub async fn stt_run (
     let request = match CreateTranscriptionRequestArgs::default()
         .file(AudioInput::from_vec_u8("discord_video.mp3".to_owned(), attachment_processed))
         .model("whisper-1")
-        //.response_format(AudioResponseFormat::Text)
         .build()
             {
                 Ok(t) => t,

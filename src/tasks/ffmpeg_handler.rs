@@ -14,17 +14,9 @@ pub async fn run_ffmpeg(file_input: Option<Vec<u8>>, url_input: Option<String>, 
     let ffmpeg_location = which("ffmpeg").unwrap_or(PathBuf::default());
     let ffmpeg_input_args: Vec<String> = split(&command).expect("Woopsie");
     let mut ffmpeg_full_args: Vec<String> = Vec::new();
-    let ffmpeg_location_as_str = match ffmpeg_location.to_str()
-        {
-            Some(t) => t,
-            None => return_error(user_id, message_channel_id, "Unable to convert FFmpeg location to string in execution".to_owned()).await.unwrap(),
-        };
     let debug_enabled: String = env::var("DEBUG").unwrap_or("0".to_owned());
 
     // This adds in the default args, leaving only the FFmpeg args to be passed to the function
-    ffmpeg_full_args.push("/C".to_owned());
-    ffmpeg_full_args.push(format!("\"{}\"", ffmpeg_location_as_str.to_string()));
-    ffmpeg_full_args.push("-y".to_owned());
     if debug_enabled != "1" {
         ffmpeg_full_args.push("-hide_banner".to_owned());
         ffmpeg_full_args.push("-loglevel".to_owned());
@@ -35,14 +27,14 @@ pub async fn run_ffmpeg(file_input: Option<Vec<u8>>, url_input: Option<String>, 
         ffmpeg_full_args.push("pipe:0".to_owned());
     } else {
         // Using unwrap as the value cannot be None
-        ffmpeg_full_args.push(format!("\"{}\"", url_input.clone().unwrap().replace("&", "\\&")));
+        ffmpeg_full_args.push(format!(r#"{}"#, url_input.clone().unwrap()));
     }
     
     ffmpeg_full_args.extend(ffmpeg_input_args);
     ffmpeg_full_args.push("pipe:1".to_owned());
 
     if ffmpeg_location != PathBuf::default() {
-        let mut ffmpeg_run = match Command::new("cmd")
+        let mut ffmpeg_run = match Command::new("ffmpeg")
             .args(ffmpeg_full_args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
