@@ -17,7 +17,7 @@ use serenity::{
     builder::{CreateAllowedMentions, CreateMessage}, http::Typing, model::channel::Message, prelude::*
 };
 
-use tasks::{handle_errors::return_error_reply, image_generation::imagegen, misc_commands::help, stt::{transcribe_from_attachment, transcribe_from_message}, text_generation::text_reply, tts::{tts_from_message, tts_from_text}};
+use tasks::{handle_errors::return_error_reply, image_generation::imagegen, misc_commands::help, stt::{transcribe_from_attachment, transcribe_from_message, transcribe_from_url}, text_generation::text_reply, tts::{tts_from_message, tts_from_text}};
 
 use which::which;
 
@@ -64,6 +64,7 @@ async fn main() {
         command_set.push(tts_from_message());
         command_set.push(transcribe_from_attachment());
         command_set.push(transcribe_from_message());
+        command_set.push(transcribe_from_url())
     }
 
 

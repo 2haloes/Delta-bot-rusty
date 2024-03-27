@@ -41,6 +41,22 @@ pub async fn transcribe_from_message(
     Ok(())
 }
 
+#[poise::command(slash_command)]
+pub async fn transcribe_from_url(
+    ctx: crate::Context<'_>,
+    #[description = "Link to the video/audio file to convert to text (video and audio supported)"] 
+    url_to_stt: String
+) -> Result<(), Error> {
+    // NOTE: This command has a timeout of 3 minutes, this is due to OpenAI sometimes taking an extremely long time to process longer text requests and at some point it does have to stop
+    let _result = match timeout(Duration::from_secs(180), stt_run(ctx, url_to_stt)).await
+        {
+            Ok(t) => t,
+            Err(_) => return_error_command(ctx, "This TTS command has timed out, this may be due to the length of the text".to_owned()).await.unwrap(),
+        };
+
+    Ok(())
+}
+
 pub async fn stt_run (
     ctx: crate::Context<'_>,
     stt_attachment_url: String
