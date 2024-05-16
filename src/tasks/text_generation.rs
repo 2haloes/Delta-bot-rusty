@@ -65,8 +65,7 @@ pub async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Ve
     let max_tokens: u16 = 4096;
     let mut message_content: String;
     let mut message_vec_content: Vec<ChatCompletionRequestMessageContentPart> = Vec::new();
-    let mut message_model = "gpt-4-turbo-preview";
-    let mut using_vision = false;
+    let mut message_model = "gpt-4o";
 
     if current_message.message_reference.is_none() {
         message_content = current_message.author.id.to_string() + "|" + &current_message.author.name + ": " + &current_message.content;
@@ -94,16 +93,10 @@ pub async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Ve
                 let parsed_attachement_link_string = parsed_attachment_link.to_string();
                 
                 /*
-                    If an image is in the context then use the vision model instead of the text model
-                    The vison model has a lower call rate per day
+                    If an image is in the context then attach it to the request
                 */
                 if image_extentions.iter().any(|suffix| parsed_attachement_link_string.ends_with(suffix)) {
                     message_vec_content.push(ChatCompletionRequestMessageContentPartImageArgs::default().image_url(attachment_link).build().unwrap().into());
-
-                    if !using_vision {
-                        message_model = "gpt-4-vision-preview";
-                        using_vision = true;
-                    }
                 }
                 /*
                     This adds the content of any attached text files to the message
@@ -175,11 +168,6 @@ pub async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Ve
                     */
                     if image_extentions.iter().any(|suffix| parsed_attachement_link_string.ends_with(suffix)) {
                         message_vec_content.push(ChatCompletionRequestMessageContentPartImageArgs::default().image_url(attachment_link).build().unwrap().into());
-    
-                        if !using_vision {
-                            message_model = "gpt-4-vision-preview";
-                            using_vision = true;
-                        }
                     }
                     /*
                         This adds the content of any attached text files to the message
