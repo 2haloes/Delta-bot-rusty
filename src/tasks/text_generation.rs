@@ -2,9 +2,9 @@ use std::env;
 
 use async_openai::{types::{ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestFunctionMessageArgs, ChatCompletionRequestMessage, ChatCompletionRequestMessageContentPart, ChatCompletionRequestMessageContentPartImageArgs, ChatCompletionRequestMessageContentPartTextArgs, ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs, ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs, Role}, Client};
 use reqwest::Url;
-use serenity::all::{CacheHttp, Http, Message};
+use serenity::all::{CacheHttp, ChannelId, Http, Message, UserId};
 
-use super::handle_errors::return_error_reply;
+use super::handle_errors::{return_error, return_error_reply};
 
 pub async fn generate_chat_messages (current_role: Role, content: Vec<ChatCompletionRequestMessageContentPart>, content_string_only: String, msg: Message) -> ChatCompletionRequestMessage {
     if current_role == Role::Assistant {
@@ -50,8 +50,7 @@ pub async fn generate_chat_messages (current_role: Role, content: Vec<ChatComple
     }
 }
 
-pub async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Vec<String> {
-    let client = Client::new();
+pub async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64, override_system: Option<String>) -> Vec<String> {
     let current_http = Http::new(&env::var("DISCORD_TOKEN")
     .expect("Expected a token in the environment"));
     let current_channel = msg.clone().channel(cache)
@@ -61,11 +60,9 @@ pub async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Ve
     let context_messages: &mut Vec<ChatCompletionRequestMessage> = &mut Vec::new();
     // Default to user role as the bot needs to be called to reply
     let mut current_role = Role::User;
-    let chatgpt_system_details = env::var("SYSTEM_DETAILS").unwrap_or("".to_owned());
-    let max_tokens: u16 = 4096;
+    let chatgpt_system_details = override_system.unwrap_or(env::var("SYSTEM_DETAILS").unwrap_or("".to_owned()));
     let mut message_content: String;
     let mut message_vec_content: Vec<ChatCompletionRequestMessageContentPart> = Vec::new();
-    let mut message_model = "gpt-4o";
 
     if current_message.message_reference.is_none() {
         message_content = current_message.author.id.to_string() + "|" + &current_message.author.name + ": " + &current_message.content;
@@ -235,28 +232,56 @@ pub async fn text_reply(msg: Message, cache: impl CacheHttp, user_id: u64) -> Ve
     );
 
     context_messages.reverse();
+    return call_text_completion(context_messages.to_vec(), Some(msg), None, None).await;
+}
+
+async fn call_text_completion(context_messages: Vec<ChatCompletionRequestMessage>, msg: Option<Message>, requester_id: Option<UserId>, channel_id: Option<ChannelId>) -> Vec<String> {
+    let client = Client::new();
+    let max_tokens: u16 = 4096;
+    let message_model = "gpt-4o";
 
     let chatgpt_request = match CreateChatCompletionRequestArgs::default()
         .model(message_model)
         .temperature(1.0)
-        .messages(&**context_messages)
+        .messages(&*context_messages)
         .max_tokens(max_tokens)
         .build()
         {
             Ok(t) => t,
-            Err(e) => return_error_reply(msg.clone(), e.to_string()).await.unwrap(),
+            Err(e) => {
+                if msg.is_some() {
+                    return_error_reply(msg.clone().unwrap(), e.to_string()).await.unwrap()
+                } else {
+                    return_error(requester_id.clone().unwrap(), channel_id.clone().unwrap(), e.to_string()).await.unwrap()
+                }
+                
+            },
         };
 
     let response_choices = match client.chat().create(chatgpt_request).await
         {
             Ok(t) => t,
-            Err(e) => return_error_reply(msg.clone(), e.to_string()).await.unwrap(),
+            Err(e) => {
+                if msg.is_some() {
+                    return_error_reply(msg.clone().unwrap(), e.to_string()).await.unwrap()
+                } else {
+                    return_error(requester_id.clone().unwrap(), channel_id.clone().unwrap(), e.to_string()).await.unwrap()
+                }
+                
+            },
         };
     let response = &response_choices.choices[0].message.content;
     let response_text = match response.as_ref()
         {
             Some(t) => t,
-            None => return_error_reply(msg.clone(), "Unable to process stop typing".to_owned()).await.unwrap(),
+            None => {
+                if msg.is_some() {
+                    return_error_reply(msg.clone().unwrap(), "Unable to process stop typing".to_owned()).await.unwrap()
+                } else {
+                    return_error(requester_id.clone().unwrap(), channel_id.clone().unwrap(), "Unable to process stop typing".to_owned()).await.unwrap()
+                }
+            },
+            
         };
     let mut return_vec: Vec<String> = Vec::new();
     

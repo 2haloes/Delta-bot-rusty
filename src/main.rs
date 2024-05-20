@@ -118,7 +118,7 @@ async fn main() {
                                 let http_cache = ctx.clone().http;
                                 let current_user_id: u64 = ctx.cache.current_user().id.into();
                                 let typing = Typing::start(http_cache.clone(), new_message.channel_id.into());
-                                let response_vec = text_reply(new_message.clone(), &ctx, current_user_id).await;
+                                let response_vec = text_reply(new_message.clone(), &ctx, current_user_id, None).await;
                                 let mut last_sent_reply = Message::default();
                                 let _default_message = Message::default();
                                 for response in response_vec {

@@ -1,8 +1,9 @@
 use std::{env, fs};
 
+use serenity::all::Message;
 use tokio::fs::try_exists;
 
-use crate::{tasks::handle_errors::return_error, Error};
+use crate::{tasks::{handle_errors::return_error, text_generation::text_reply}, Error};
 
 /// Show help message
 #[poise::command(prefix_command, slash_command)]
@@ -39,5 +40,23 @@ pub async fn help(
         let _ = channel_id.say(ctx, format!("{}", help_full_markdown)).await;
     }
     
+    Ok(())
+}
+
+/// Override the system command
+#[poise::command(prefix_command, slash_command)]
+pub async fn override_system(
+    ctx: crate::Context<'_>,
+    #[description = "The system message to use"]
+    system_message: String,
+    #[description = "The message content"]
+    content: Option<String>,
+    #[description = "The message URL to reply to"]
+    message: Option<Message>,
+) -> Result<(), Error> {
+    if message.is_some() {
+        let message_return: Vec<String> = text_reply(message.unwrap(), ctx.http(), ctx.author().id.into(), Some(system_message)).await;
+        
+    }
     Ok(())
 }
